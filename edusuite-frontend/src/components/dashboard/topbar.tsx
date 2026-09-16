@@ -117,7 +117,29 @@ export function Topbar() {
     const timer = setTimeout(async () => {
       setIsSearchLoading(true);
       const results = await globalSearch(searchQuery);
-      setSearchResults(results);
+
+      const isFacultyUser = role === "faculty" || role === "staff";
+      const hasAdmissionPrivilege =
+        role === "super-admin" ||
+        role === "super_admin" ||
+        role === "admin" ||
+        flags.includes("isSystemAdmin") ||
+        flags.includes("isAdmissionOfficer") ||
+        flags.includes("isPrincipal") ||
+        flags.includes("isVicePrincipal");
+
+      const filteredResults =
+        isFacultyUser && !hasAdmissionPrivilege
+          ? results.filter(
+              (r) =>
+                !r.route.includes("/admission") &&
+                !r.route.includes("/pre-admission") &&
+                !r.title.toLowerCase().includes("pre-admission") &&
+                !r.title.toLowerCase().includes("admission office")
+            )
+          : results;
+
+      setSearchResults(filteredResults);
       setIsSearchLoading(false);
       setIsSearchOpen(true);
     }, 300);

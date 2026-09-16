@@ -1,89 +1,104 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { Panel } from "@/components/dashboard/panel";
-import type { StudentAttendance } from "@/data/faculty-mock-data";
+
+export interface RegisterStudentItem {
+  id?: string;
+  rollNumber: string;
+  name: string;
+  department?: string;
+  semester?: number;
+  section?: string;
+  totalClasses?: number;
+  attendedClasses?: number;
+  percentage?: number;
+  status?: string;
+}
 
 interface AttendanceRegisterProps {
-  students?: StudentAttendance[];
+  students?: RegisterStudentItem[];
   subject?: string;
   section?: string;
 }
 
 export function AttendanceRegister({ students = [], subject, section }: AttendanceRegisterProps) {
-  // Generate dates 01 Aug to 15 Aug
-  const days = Array.from({ length: 15 }, (_, i) => i + 1);
-
-  const getStatusColor = (val: string) => {
-    switch (val) {
-      case "P":
-        return "text-emerald-600 bg-emerald-500/5 font-extrabold";
-      case "A":
-        return "text-rose-600 bg-rose-500/5 font-extrabold";
-      case "L":
-        return "text-amber-600 bg-amber-500/5 font-bold";
-      case "OD":
-        return "text-blue-600 bg-blue-500/5 font-bold";
-      default:
-        return "text-purple-600 bg-purple-500/5 font-bold";
-    }
-  };
-
-  // Mock function returning choices based on indices to look random yet deterministic
-  const getMockStatus = (roll: string, day: number) => {
-    const val = (roll.charCodeAt(roll.length - 1) + day) % 15;
-    if (val === 3 || val === 11) return "A";
-    if (val === 7) return "L";
-    if (val === 13) return "OD";
-    if (val === 14) return "ML";
-    return "P";
-  };
-
-  const studentList = students && students.length > 0 ? students : Array.from({ length: 24 }).map((_, i) => ({
-    rollNumber: `26SEC0${(i + 1).toString().padStart(2, "0")}`,
-    name: ["Alapati Charan", "Meka Krishna", "Boddu Varun", "K. Sai Teja", "Sanjay Gupta", "A. Meghana", "R. Karthik", "J. Rahul"][i % 8] || `Student ${i + 1}`,
-    status: "Present",
-    percentage: 85
-  }));
+  if (!students || students.length === 0) {
+    return (
+      <Panel
+        title={`Student Attendance Register ${subject && subject !== "ALL" ? `— ${subject}` : ""}`}
+        description="Consolidated student attendance percentage and academic roster"
+        className="border border-border bg-card rounded-2xl p-5 shadow-card text-xs"
+      >
+        <div className="p-8 text-center border border-dashed rounded-2xl text-muted-foreground">
+          No students currently found for this section or subject filter.
+        </div>
+      </Panel>
+    );
+  }
 
   return (
     <Panel
-      title={`Monthly Attendance Register Grid ${subject && subject !== 'ALL' ? `— ${subject}` : ''}`}
-      description="Visual matrix showing daily attendance logs for August 2026"
+      title={`Student Attendance Register ${subject && subject !== "ALL" ? `— ${subject}` : ""} ${
+        section && section !== "ALL" ? `(${section})` : ""
+      }`}
+      description="Consolidated student attendance percentages, session counts, and eligibility indicators"
       className="border border-border bg-card rounded-2xl p-5 shadow-card text-xs"
     >
       <div className="overflow-x-auto max-w-full rounded-2xl border">
-        <Table className="min-w-[800px] text-xs">
+        <Table className="min-w-[700px] text-xs">
           <TableHeader>
             <TableRow className="bg-muted/40">
-              <TableHead className="w-[180px] font-bold sticky left-0 bg-background/90 z-10 border-r">Student Name</TableHead>
-              {days.map((day) => (
-                <TableHead key={day} className="text-center font-mono font-bold w-[45px]">
-                  {day < 10 ? `0${day}` : day}
-                </TableHead>
-              ))}
+              <TableHead className="font-bold">Roll Number</TableHead>
+              <TableHead className="font-bold">Student Name</TableHead>
+              <TableHead className="font-bold">Section</TableHead>
+              <TableHead className="text-center font-bold">Total Classes</TableHead>
+              <TableHead className="text-center font-bold">Attended</TableHead>
+              <TableHead className="text-center font-bold">Attendance %</TableHead>
+              <TableHead className="text-right font-bold">Eligibility</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {studentList.map((stud) => (
-              <TableRow key={stud.rollNumber} className="hover:bg-muted/20">
-                <TableCell className="font-bold text-foreground sticky left-0 bg-background/90 z-10 border-r">
-                  <div>
-                    <p className="truncate w-[160px]">{stud.name}</p>
-                    <p className="font-mono text-[0.55rem] text-muted-foreground font-semibold mt-0.5">{stud.rollNumber}</p>
-                  </div>
-                </TableCell>
-                {days.map((day) => {
-                  const status = getMockStatus(stud.rollNumber, day);
-                  return (
-                    <TableCell
-                      key={day}
-                      className={`text-center font-mono text-[0.7rem] border-r border-b/20 last:border-r-0 ${getStatusColor(status)}`}
+            {students.map((stud) => {
+              const pct = stud.percentage ?? 85;
+              const isShortage = pct < 75;
+
+              return (
+                <TableRow key={stud.rollNumber} className="hover:bg-muted/20">
+                  <TableCell className="font-mono font-bold text-foreground">
+                    {stud.rollNumber}
+                  </TableCell>
+                  <TableCell className="font-semibold text-foreground">
+                    {stud.name}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground font-medium">
+                    {stud.section || "A"}
+                  </TableCell>
+                  <TableCell className="text-center font-mono">
+                    {stud.totalClasses ?? 12}
+                  </TableCell>
+                  <TableCell className="text-center font-mono font-semibold text-foreground">
+                    {stud.attendedClasses ?? 10}
+                  </TableCell>
+                  <TableCell className="text-center font-mono font-extrabold">
+                    <span className={isShortage ? "text-rose-600" : "text-emerald-600"}>
+                      {pct}%
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Badge
+                      variant="outline"
+                      className={`text-[0.62rem] font-bold ${
+                        isShortage
+                          ? "bg-rose-500/10 text-rose-600 border-rose-500/20"
+                          : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                      }`}
                     >
-                      {status}
-                    </TableCell>
-                  );
-                })}
-              </TableRow>
-            ))}
+                      {isShortage ? "Shortage Warning" : "Eligible"}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>

@@ -1,133 +1,273 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRole } from "@/context/role-context";
-import {
-  FACULTY_DASHBOARD_DATA_BY_DEPT,
-  type FacultyDashboardData,
-  type TimetableSlot,
-} from "@/data/faculty-mock-data";
-import { getFacultyAssignedSections } from "@/lib/mock-examcell-state";
+import api from "@/lib/api";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 
-// Subcomponents imports
 import { AttendanceHeader } from "@/components/dashboard/attendance/attendance-header";
 import { SearchFilterBar } from "@/components/dashboard/attendance/search-filter-bar";
 import { StatisticsCards } from "@/components/dashboard/attendance/statistics-cards";
-import { TodayClasses } from "@/components/dashboard/attendance/today-classes";
-import { AttendanceForm } from "@/components/dashboard/attendance/attendance-form";
-import { StudentAttendanceTable } from "@/components/dashboard/attendance/student-attendance-table";
-import { AttendanceRegister } from "@/components/dashboard/attendance/attendance-register";
-import { AttendanceCalendar } from "@/components/dashboard/attendance/attendance-calendar";
-import { LeaveRequestPanel } from "@/components/dashboard/attendance/leave-request-panel";
+import { TodayClasses, type TodayClassItem } from "@/components/dashboard/attendance/today-classes";
+import { AttendanceForm, type AttendanceStudentItem } from "@/components/dashboard/attendance/attendance-form";
+import { AttendanceRegister, type RegisterStudentItem } from "@/components/dashboard/attendance/attendance-register";
 import { AttendanceAnalytics } from "@/components/dashboard/attendance/attendance-analytics";
-import { LowAttendanceAlerts } from "@/components/dashboard/attendance/low-attendance-alerts";
-import { AttendanceHistory } from "@/components/dashboard/attendance/attendance-history";
-import { QuickActions } from "@/components/dashboard/attendance/quick-actions";
 import { SkeletonLoader } from "@/components/dashboard/attendance/skeleton-loader";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "sonner";
 
 export const Route = createFileRoute("/faculty/attendance")({
   head: () => ({
-    meta: [{ title: "Attendance — EduSuite Pro" }],
+    meta: [{ title: "Attendance Management — EduSuite Pro" }],
   }),
   component: FacultyAttendancePage,
 });
 
 function FacultyAttendancePage() {
   const { profile } = useRole();
-  const deptCode = profile.department || "CSE";
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("today");
 
-  // Dynamically resolve assigned sections appointed by Examcell for logged-in faculty
-  const assignedSections = useMemo(() => {
-    return getFacultyAssignedSections(profile.name || profile.personaName || "Amit Rathore");
-  }, [profile.name, profile.personaName]);
+  // Real data state from PostgreSQL
+  const [todayClasses, setTodayClasses] = useState<TodayClassItem[]>([]);
+  const [stats, setStats] = useState({
+    conducted: 0,
+    pending: 0,
+    presentToday: 0,
+    absentToday: 0,
+    average: 0,
+    leavesPending: 0,
+  });
+  const [academicYear, setAcademicYear] = useState("2024-25");
+  const [semester, setSemester] = useState("Sem 1 / Sem 5");
+  const [targetDate, setTargetDate] = useState("");
 
-  const dynamicTimetable: TimetableSlot[] = useMemo(() => {
-    return assignedSections.map((sec, idx) => ({
-      time: idx === 0 ? "09:00 - 10:00" : idx === 1 ? "10:15 - 11:15" : idx === 2 ? "11:30 - 12:30" : "14:00 - 15:00",
-      subject: `${sec.subjectCode} - ${sec.subjectName}`,
-      section: `${sec.department} Sec ${sec.section}`,
-      room: `Block A - Room ${101 + idx}`,
-      status: idx === 0 ? ("Completed" as const) : idx === 1 ? ("Ongoing" as const) : ("Upcoming" as const)
-    }));
-  }, [assignedSections]);
+  // Attendance Form state
+  const [activeFormSlot, setActiveFormSlot] = useState<TodayClassItem | null>(null);
+  const [rosterStudents, setRosterStudents] = useState<AttendanceStudentItem[]>([]);
+  const [loadingRoster, setLoadingRoster] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const attendanceModuleData = useMemo(() => {
-    return {
-      stats: {
-        conducted: Math.max(12, assignedSections.length * 12),
-        pending: 2,
-        presentToday: Math.max(24, assignedSections.length * 20),
-        absentToday: 4,
-        average: 89,
-        leavesPending: 3
-      }
-    };
-  }, [assignedSections]);
+  // Register & Analytics data
+  const [registerStudents, setRegisterStudents] = useState<RegisterStudentItem[]>([]);
+  const [analyticsData, setAnalyticsData] = useState<{
+    distributionData: { name: string; value: number }[];
+    trendData: { day: string; attendance: number }[];
+    hasData: boolean;
+    totalRecords: number;
+  }>({
+    distributionData: [],
+    trendData: [],
+    hasData: true,
+    totalRecords: 0,
+  });
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
-  const [todayClasses, setTodayClasses] = useState<TimetableSlot[]>([]);
-  const [activeFormSlot, setActiveFormSlot] = useState<TimetableSlot | null>(null);
-
+  // Filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("ALL");
   const [selectedSection, setSelectedSection] = useState("ALL");
 
-  useEffect(() => {
-    setTodayClasses(dynamicTimetable);
-    setSearchQuery("");
-    setSelectedSubject("ALL");
-    setSelectedSection("ALL");
-    setActiveFormSlot(null);
-  }, [dynamicTimetable]);
+  // Fetch today's schedule and attendance stats from PostgreSQL
+  const fetchTodayData = useCallback(async (isRefresh = false) => {
+    try {
+      if (!isRefresh) setLoading(true);
+      const res = await api.get("/api/attendance/faculty/today");
 
-  const handleRefresh = () => {
-    setLoading(true);
-    toast.success("Synchronizing attendance logs...", {
-      description: "Fetching latest appointed section registers.",
-    });
-    setTimeout(() => {
+      if (res.data && res.status === 200) {
+        setTodayClasses(res.data.classes || []);
+        if (res.data.stats) {
+          setStats(res.data.stats);
+        }
+        if (res.data.academicYear) setAcademicYear(res.data.academicYear);
+        if (res.data.semester) setSemester(res.data.semester);
+        if (res.data.targetDate) setTargetDate(res.data.targetDate);
+      } else {
+        toast.error("Failed to load today's schedule", {
+          description: res.data?.error || "Could not retrieve timetable sessions.",
+        });
+      }
+    } catch (err: any) {
+      toast.error("Network error while loading schedule");
+    } finally {
       setLoading(false);
-    }, 600);
+    }
+  }, []);
+
+  // Fetch register data
+  const fetchRegisterData = useCallback(async () => {
+    try {
+      const res = await api.get("/api/attendance/faculty/register");
+      if (res.data && Array.isArray(res.data)) {
+        setRegisterStudents(res.data);
+      }
+    } catch (err) {
+      console.error("Failed to load attendance register", err);
+    }
+  }, []);
+
+  // Fetch analytics data
+  const fetchAnalyticsData = useCallback(async () => {
+    try {
+      setLoadingAnalytics(true);
+      const res = await api.get("/api/attendance/faculty/analytics");
+      if (res.data && res.status === 200) {
+        setAnalyticsData({
+          distributionData: res.data.distributionData || [],
+          trendData: res.data.trendData || [],
+          hasData: res.data.hasData !== false,
+          totalRecords: res.data.totalRecords || 0,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to load attendance analytics", err);
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTodayData();
+    fetchRegisterData();
+    fetchAnalyticsData();
+  }, [fetchTodayData, fetchRegisterData, fetchAnalyticsData]);
+
+  const handleRefresh = async () => {
+    setLoading(true);
+    toast.info("Refreshing attendance data from PostgreSQL...");
+    await Promise.all([fetchTodayData(true), fetchRegisterData(), fetchAnalyticsData()]);
+    setLoading(false);
+    toast.success("Attendance records synchronized.");
   };
 
-  const handleTakeAttendance = (slot: TimetableSlot) => {
-    setActiveFormSlot(slot);
+  // Open Attendance Taking Interface with real enrolled student roster
+  const handleTakeAttendance = async (slot: TodayClassItem) => {
+    try {
+      setLoadingRoster(true);
+      const timetableId = slot.timetableId || slot.id;
+      const res = await api.get(`/api/attendance/faculty/session/${timetableId}/roster`);
+
+      if (res.status === 403) {
+        toast.error("Access Forbidden", {
+          description: "You are not authorized to mark attendance for this session.",
+        });
+        return;
+      }
+
+      if (res.data && res.data.students) {
+        setRosterStudents(res.data.students);
+        setActiveFormSlot({
+          ...slot,
+          room: res.data.session?.room || slot.room,
+        });
+      } else {
+        toast.error("Could not load class roster", {
+          description: res.data?.error || "No students found for this session.",
+        });
+      }
+    } catch (err: any) {
+      toast.error("Failed to load class roster");
+    } finally {
+      setLoadingRoster(false);
+    }
   };
 
-  const handleViewRegister = (slot: TimetableSlot) => {
+  const handleViewRegister = (slot: TodayClassItem) => {
     setSelectedSubject(slot.subject);
-    setSelectedSection(slot.section);
+    setSelectedSection(slot.rawSection || slot.section);
     setActiveTab("register");
   };
 
-  const handleSubmitAttendance = (presentRolls: string[], absentRolls: string[]) => {
-    if (activeFormSlot) {
-      setTodayClasses((prev) =>
-        prev.map((c) =>
-          c.time === activeFormSlot.time && c.subject === activeFormSlot.subject
-            ? { ...c, status: "Completed" as const }
-            : c
-        )
-      );
-      toast.success(`Attendance submitted for ${activeFormSlot.subject} (${activeFormSlot.section})`);
+  // Atomic submission to PostgreSQL
+  const handleSubmitAttendance = async (records: { studentId: string; status: "Present" | "Absent" | "Late" }[]) => {
+    if (!activeFormSlot) return;
+
+    try {
+      setIsSubmitting(true);
+      const timetableId = activeFormSlot.timetableId || activeFormSlot.id;
+      const subDate = targetDate || new Date().toISOString().split("T")[0];
+
+      const res = await api.post(`/api/attendance/faculty/session/${timetableId}/mark`, {
+        date: subDate,
+        records,
+      });
+
+      if (res.status === 200 && res.data?.success) {
+        toast.success("Attendance submitted successfully!", {
+          description: res.data.message || `Recorded attendance for ${records.length} students.`,
+        });
+
+        // Close form and refresh views
+        setActiveFormSlot(null);
+        await Promise.all([fetchTodayData(true), fetchRegisterData(), fetchAnalyticsData()]);
+      } else {
+        toast.error("Failed to submit attendance", {
+          description: res.data?.error || "An error occurred during submission.",
+        });
+      }
+    } catch (err: any) {
+      toast.error("Submission failed due to network error");
+    } finally {
+      setIsSubmitting(false);
     }
-    setActiveFormSlot(null);
   };
+
+  // Filter lists
+  const availableSubjects = useMemo(() => {
+    const list = todayClasses.map((c) => c.subject);
+    return Array.from(new Set(list));
+  }, [todayClasses]);
+
+  const availableSections = useMemo(() => {
+    const list = todayClasses.map((c) => c.rawSection || c.section);
+    return Array.from(new Set(list));
+  }, [todayClasses]);
+
+  // Filtered Today's Classes
+  const filteredTodayClasses = useMemo(() => {
+    return todayClasses.filter((c) => {
+      if (selectedSubject !== "ALL" && c.subject !== selectedSubject) return false;
+      if (selectedSection !== "ALL" && (c.rawSection || c.section) !== selectedSection && c.section !== selectedSection) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchSub = c.subject.toLowerCase().includes(q);
+        const matchSec = c.section.toLowerCase().includes(q);
+        const matchCode = (c.classCode || "").toLowerCase().includes(q);
+        if (!matchSub && !matchSec && !matchCode) return false;
+      }
+      return true;
+    });
+  }, [todayClasses, selectedSubject, selectedSection, searchQuery]);
+
+  // Filtered Register Students
+  const filteredRegister = useMemo(() => {
+    return registerStudents.filter((s) => {
+      if (selectedSection !== "ALL" && s.section !== selectedSection && `Section ${s.section}` !== selectedSection) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchName = s.name.toLowerCase().includes(q);
+        const matchRoll = s.rollNumber.toLowerCase().includes(q);
+        if (!matchName && !matchRoll) return false;
+      }
+      return true;
+    });
+  }, [registerStudents, selectedSection, searchQuery]);
+
+  const displayDate = targetDate
+    ? new Date(targetDate).toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" })
+    : new Date().toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" });
 
   return (
     <div className="space-y-6">
       {/* 1. Page Header */}
       <AttendanceHeader
-        departmentName={deptCode}
-        academicYear="2024-25"
-        semester="Sem 1 / Sem 5"
+        academicYear={academicYear}
+        semester={semester}
+        currentDate={displayDate}
       />
 
-      {/* 2. Global Load Stats */}
-      <StatisticsCards attendanceData={attendanceModuleData} />
+      {/* 2. Global Load Stats (Direct from PostgreSQL) */}
+      <StatisticsCards attendanceData={{ stats }} />
 
       {/* 3. Search and filter tools */}
       <SearchFilterBar
@@ -138,8 +278,8 @@ function FacultyAttendancePage() {
         selectedSection={selectedSection}
         onSectionChange={setSelectedSection}
         onRefresh={handleRefresh}
-        subjectsList={todayClasses.map(c => c.subject)}
-        sectionsList={todayClasses.map(c => c.section)}
+        subjectsList={availableSubjects}
+        sectionsList={availableSections}
       />
 
       {/* 4. Tab Container */}
@@ -158,19 +298,31 @@ function FacultyAttendancePage() {
           </TabsList>
         </div>
 
-        {/* Tab 1: Today's Classes */}
+        {/* Tab 1: Today's Classes & Attendance Taking Interface */}
         <TabsContent value="today" className="space-y-6">
-          {activeFormSlot ? (
+          {loadingRoster ? (
+            <div className="bg-card border rounded-3xl p-12 text-center shadow-card space-y-3">
+              <Loader2 className="size-8 text-primary animate-spin mx-auto" />
+              <p className="text-sm font-bold text-foreground">Loading class roster from database...</p>
+              <p className="text-xs text-muted-foreground">Fetching verified student enrollments for this session.</p>
+            </div>
+          ) : activeFormSlot ? (
             <AttendanceForm
-              slot={activeFormSlot}
+              slot={{
+                ...activeFormSlot,
+                facultyName: profile.name || "Dr. Ravi Kumar",
+                date: targetDate || new Date().toISOString().split("T")[0],
+              }}
+              students={rosterStudents}
               onCancel={() => setActiveFormSlot(null)}
               onSubmit={handleSubmitAttendance}
+              isSubmitting={isSubmitting}
             />
           ) : loading ? (
             <SkeletonLoader />
           ) : (
             <TodayClasses
-              classes={todayClasses}
+              classes={filteredTodayClasses}
               onTakeAttendance={handleTakeAttendance}
               onViewRegister={handleViewRegister}
             />
@@ -180,6 +332,7 @@ function FacultyAttendancePage() {
         {/* Tab 2: Attendance Register */}
         <TabsContent value="register" className="space-y-6">
           <AttendanceRegister
+            students={filteredRegister}
             subject={selectedSubject}
             section={selectedSection}
           />
@@ -187,7 +340,13 @@ function FacultyAttendancePage() {
 
         {/* Tab 3: Attendance Analytics */}
         <TabsContent value="analytics" className="space-y-6">
-          <AttendanceAnalytics />
+          <AttendanceAnalytics
+            distributionData={analyticsData.distributionData}
+            trendData={analyticsData.trendData}
+            hasData={analyticsData.hasData}
+            totalRecords={analyticsData.totalRecords}
+            isLoading={loadingAnalytics}
+          />
         </TabsContent>
       </Tabs>
     </div>

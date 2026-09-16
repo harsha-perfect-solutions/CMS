@@ -4,10 +4,10 @@ import { Badge } from "@/components/ui/badge";
 import type { CourseOutcome } from "@/data/faculty-mock-data";
 
 interface CourseOutcomeCardsProps {
-  outcomes: CourseOutcome[];
+  outcomes?: CourseOutcome[];
 }
 
-export function CourseOutcomeCards({ outcomes }: CourseOutcomeCardsProps) {
+export function CourseOutcomeCards({ outcomes = [] }: CourseOutcomeCardsProps) {
   const getMappingColor = (status: string) => {
     switch (status) {
       case "High":
@@ -18,6 +18,18 @@ export function CourseOutcomeCards({ outcomes }: CourseOutcomeCardsProps) {
         return "bg-blue-500/10 text-blue-600 border-blue-500/20";
     }
   };
+
+  if (!outcomes || outcomes.length === 0) {
+    return (
+      <Panel
+        title="Course Outcomes (CO)"
+        description="NBA-mapped syllabus guidelines and cognitive levels"
+        className="border border-border bg-card rounded-2xl p-5 shadow-card text-xs"
+      >
+        <p className="text-muted-foreground text-xs italic py-2">No Course Outcomes registered.</p>
+      </Panel>
+    );
+  }
 
   return (
     <Panel

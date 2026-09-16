@@ -13,3 +13,9 @@
 .roo
 .trae
 .windsurf
+
+# Scratch scripts & logs
+scratch/
+*.log
+.DS_Store
+

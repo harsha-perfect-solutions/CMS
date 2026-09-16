@@ -3,10 +3,10 @@ import { Panel } from "@/components/dashboard/panel";
 import type { TimelineEvent } from "@/data/faculty-mock-data";
 
 interface SubjectTimelineProps {
-  timeline: TimelineEvent[];
+  timeline?: TimelineEvent[];
 }
 
-export function SubjectTimeline({ timeline }: SubjectTimelineProps) {
+export function SubjectTimeline({ timeline = [] }: SubjectTimelineProps) {
   const getIconColor = (status: string) => {
     switch (status) {
       case "Completed":
@@ -15,6 +15,18 @@ export function SubjectTimeline({ timeline }: SubjectTimelineProps) {
         return "bg-blue-500 text-white";
     }
   };
+
+  if (!timeline || timeline.length === 0) {
+    return (
+      <Panel
+        title="Syllabus & Course Milestones"
+        description="Chronological record of semester evaluations and syllabus benchmarks"
+        className="border border-border bg-card rounded-2xl p-5 shadow-card text-xs"
+      >
+        <p className="text-muted-foreground text-xs italic py-2">No timeline events scheduled.</p>
+      </Panel>
+    );
+  }
 
   return (
     <Panel

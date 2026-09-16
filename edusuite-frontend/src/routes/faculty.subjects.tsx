@@ -1,13 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRole } from "@/context/role-context";
-import {
-  FACULTY_DASHBOARD_DATA_BY_DEPT,
-  type FacultyDashboardData,
-  type SubjectItem,
-  DEPARTMENT_NAMES,
-} from "@/data/faculty-mock-data";
-import { getFacultyAssignedSections } from "@/lib/mock-examcell-state";
+import { api } from "@/lib/api";
+import type { SubjectItem } from "@/data/faculty-mock-data";
 
 // Subcomponents imports
 import { SubjectHeader } from "@/components/dashboard/subjects/subject-header";
@@ -20,77 +15,67 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/faculty/subjects")({
   head: () => ({
-    meta: [{ title: "Subjects — EduSuite Pro" }],
+    meta: [{ title: "My Subjects & Academics — EduSuite Pro" }],
   }),
   component: FacultySubjectsPage,
 });
 
 function FacultySubjectsPage() {
   const { profile } = useRole();
-  const deptCode = profile.department || "CSE";
-  
-  const dashboardData = (FACULTY_DASHBOARD_DATA_BY_DEPT[deptCode] || FACULTY_DASHBOARD_DATA_BY_DEPT["CSE"]) as FacultyDashboardData;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Dynamically resolve assigned sections appointed by Examcell for logged-in faculty
-  const assignedSections = useMemo(() => {
-    return getFacultyAssignedSections(profile.name || profile.personaName || "Amit Rathore");
-  }, [profile.name, profile.personaName]);
+  const [departmentName, setDepartmentName] = useState<string>("Computer Science & Engineering");
+  const [academicYear, setAcademicYear] = useState<string>("2026-27");
+  const [semester, setSemester] = useState<string>("Semester 5");
+  const [originalSubjects, setOriginalSubjects] = useState<SubjectItem[]>([]);
 
-  const originalSubjects: SubjectItem[] = useMemo(() => {
-    return assignedSections.map(sec => {
-      const typeLower = (sec.courseType || "").toLowerCase();
-      const isIntegrated = typeLower.includes("integrated") || sec.credits >= 4;
-      const isLab = typeLower.includes("lab");
-
-      const typeLabel = isLab ? "Lab" : isIntegrated ? "Integrated" : "Theory";
-      const weeklyHours = isIntegrated ? 5 : isLab ? 4 : 3;
-
-      return {
-        id: sec.id,
-        code: sec.subjectCode,
-        name: sec.subjectName,
-        type: typeLabel as any,
-        status: 'Active' as const,
-        credits: sec.credits,
-        regulation: 'R22',
-        semester: `Sem ${sec.semester}`,
-        department: sec.department,
-        assignedSections: [`${sec.department}-${sec.section}`],
-        sections: [`${sec.department}-${sec.section}`],
-        weeklyHours: weeklyHours,
-        studentsCount: sec.studentCount,
-        studentCount: sec.studentCount,
-        syllabusCompletion: 85,
-        assignmentsCount: 4,
-        labsCompleted: isLab ? 8 : undefined
-      };
-    }) as SubjectItem[];
-  }, [assignedSections]);
-
-  const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedType, setSelectedType] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
-  
+
   const [selectedSubject, setSelectedSubject] = useState<SubjectItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // Fetch real subjects assigned to the authenticated faculty member from PostgreSQL
+  const fetchSubjects = useCallback(async (isRefresh = false) => {
+    try {
+      if (isRefresh) {
+        toast.loading("Synchronizing subjects from database...", { id: "refresh-subjects" });
+      } else {
+        setLoading(true);
+      }
+      setError(null);
+
+      const res = await api.get("/api/faculty/subjects");
+      const data = res.data || {};
+
+      setOriginalSubjects(data.subjects || []);
+      if (data.departmentName) setDepartmentName(data.departmentName);
+      if (data.academicYear) setAcademicYear(data.academicYear);
+      if (data.semester) setSemester(data.semester);
+
+      if (isRefresh) {
+        toast.success("Subjects synchronized with database", { id: "refresh-subjects" });
+      }
+    } catch (err: any) {
+      console.error("Failed to load faculty subjects:", err);
+      const errMsg = err?.response?.data?.error || "Failed to load assigned subjects.";
+      setError(errMsg);
+      if (isRefresh) {
+        toast.error("Failed to synchronize subjects", { id: "refresh-subjects" });
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    setSearchQuery("");
-    setSelectedType("ALL");
-    setSelectedStatus("ALL");
-    setSelectedSubject(null);
-    setDrawerOpen(false);
-  }, [deptCode]);
+    fetchSubjects();
+  }, [fetchSubjects]);
 
   const handleRefresh = () => {
-    setLoading(true);
-    toast.success("Synchronizing syllabus databases...", {
-      description: "Fetching updated appointed subjects.",
-    });
-    setTimeout(() => {
-      setLoading(false);
-    }, 600);
+    fetchSubjects(true);
   };
 
   const handleSelectSubject = (subject: SubjectItem) => {
@@ -98,34 +83,49 @@ function FacultySubjectsPage() {
     setDrawerOpen(true);
   };
 
-  const filteredSubjects = originalSubjects.filter((sub) => {
-    const matchesSearch =
-      sub.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      sub.code.toLowerCase().includes(searchQuery.toLowerCase());
-      
-    const matchesType = selectedType === "ALL" || sub.type === selectedType;
-    const matchesStatus = selectedStatus === "ALL" || sub.status === selectedStatus;
+  const filteredSubjects = useMemo(() => {
+    return originalSubjects.filter((sub) => {
+      const matchesSearch =
+        sub.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        sub.code.toLowerCase().includes(searchQuery.toLowerCase());
 
-    return matchesSearch && matchesType && matchesStatus;
-  });
+      const matchesType = selectedType === "ALL" || sub.type === selectedType;
+      const matchesStatus = selectedStatus === "ALL" || sub.status === selectedStatus;
+
+      return matchesSearch && matchesType && matchesStatus;
+    });
+  }, [originalSubjects, searchQuery, selectedType, selectedStatus]);
 
   return (
     <div className="space-y-6">
       {/* 1. Page Header */}
       <SubjectHeader
-        departmentName={DEPARTMENT_NAMES[deptCode] || dashboardData.profileData.department}
-        academicYear="2024-25"
-        semester="Sem 1 / Sem 5"
+        departmentName={departmentName}
+        academicYear={academicYear}
+        semester={semester}
       />
 
       {/* 2. Global Load Stats */}
       <StatisticsCards subjects={originalSubjects} />
 
-
+      {/* 3. Search and Filter Controls */}
+      <SearchFilterBar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        selectedType={selectedType}
+        onTypeChange={setSelectedType}
+        selectedStatus={selectedStatus}
+        onStatusChange={setSelectedStatus}
+        onRefresh={handleRefresh}
+      />
 
       {/* 4. Grid view vs Skeletons */}
       {loading ? (
         <SkeletonLoader />
+      ) : error ? (
+        <div className="p-8 text-center border border-dashed rounded-3xl bg-card text-destructive text-sm font-semibold">
+          {error}
+        </div>
       ) : (
         <SubjectGrid
           subjects={filteredSubjects}

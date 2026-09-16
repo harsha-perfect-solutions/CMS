@@ -67,6 +67,9 @@ model Faculty {
   reimbursements      Reimbursement[]
   subjectAllocations  SubjectAllocation[]
   lmsResources        LmsResource[]
+  lessonPlans         LessonPlan[]
+  leaveRequests       FacultyLeave[]
+  leaveBalances       FacultyLeaveBalance[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 }
@@ -101,6 +104,7 @@ model Course {
   timetables          MasterTimetable[]
   subjectAllocations  SubjectAllocation[]
   lmsResources        LmsResource[]
+  lessonPlans         LessonPlan[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 }
@@ -122,6 +126,7 @@ model LmsResource {
   isPublished  Boolean  @default(true)
   facultyId    String
   faculty      Faculty  @relation(fields: [facultyId], references: [id])
+  lessonPlans  LessonPlan[]
   uploadedAt   DateTime @default(now())
   createdAt    DateTime @default(now())
 
@@ -284,6 +289,7 @@ model MasterTimetable {
   isLab        Boolean  @default(false)
 
   attendanceRecords AttendanceRecord[]
+  lessonPlans       LessonPlan[]
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -432,6 +438,72 @@ model SubjectAllocation {
   @@index([academicYear])
 }
 
+model LessonPlan {
+  id                  String           @id @default(uuid())
+  facultyId           String
+  faculty             Faculty          @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  courseId            String
+  course              Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  department          String
+  semester            Int
+  section             String
+  academicYear        String           @default("2026-27")
+  unitNumber          Int              @default(1)
+  unitTitle           String
+  topic               String
+  subtopic            String?
+  plannedDate         String?          // YYYY-MM-DD
+  plannedStartTime    String?          // e.g. "09:00 AM"
+  plannedEndTime      String?          // e.g. "10:00 AM"
+  durationMinutes     Int              @default(60)
+  teachingMode        String           @default("Theory") // "Theory" | "Lab" | "Integrated"
+  teachingMethod      String           @default("Lecture") // "Lecture" | "Tutorial" | "Laboratory" | "Discussion" | "Demonstration" | "Case Study"
+  learningObjectives  String?          // JSON array or text
+  plannedActivities   String?          // JSON array or text
+  actualActivities    String?          // JSON array or text
+  requiredResources   String?
+  assessmentMethod    String?
+  homeworkAssignment  String?
+  status              String           @default("PLANNED") // "DRAFT" | "PLANNED" | "IN_PROGRESS" | "COMPLETED" | "POSTPONED" | "CANCELLED"
+  postponedReason     String?
+  actualDate          String?
+  actualDuration      Int?
+  teachingNotes       String?
+  topicsCovered       String?
+  timetableSessionId  String?
+  timetableSession    MasterTimetable? @relation(fields: [timetableSessionId], references: [id], onDelete: SetNull)
+  lmsResourceId       String?
+  lmsResource         LmsResource?     @relation(fields: [lmsResourceId], references: [id], onDelete: SetNull)
+  coveragePercentage  Float            @default(0)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([facultyId])
+  @@index([courseId])
+  @@index([department, semester, section])
+  @@index([plannedDate])
+  @@index([status])
+}
+
+model ExamSchedule {
+  id                 String    @id @db.VarChar(255)
+  name               String    @db.VarChar(255)
+  type               String    @db.VarChar(100)
+  department         String    @db.VarChar(100)
+  year               Int
+  semester           Int
+  startDate          String?   @map("start_date") @db.VarChar(100)
+  endDate            String?   @map("end_date") @db.VarChar(100)
+  status             String    @db.VarChar(100)
+  enrollmentDeadline String?   @map("enrollment_deadline") @db.VarChar(100)
+  examFee            Decimal?  @map("exam_fee") @db.Decimal(10, 2)
+  createdBy          String?   @map("created_by") @db.VarChar(255)
+  createdAt          DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt          DateTime? @default(now()) @map("updated_at") @db.Timestamp(6)
+
+  @@map("exam_schedules")
+}
+
 model ApprovalRequest {
   id                   String             @id @default(uuid())
   requestNumber        String             @unique // e.g. "REQ-2026-0801"
@@ -448,6 +520,8 @@ model ApprovalRequest {
   reimbursement        Reimbursement?     @relation(fields: [reimbursementId], references: [id], onDelete: SetNull)
   bankChangeRequestId  String?
   bankChangeRequest    BankChangeRequest? @relation(fields: [bankChangeRequestId], references: [id], onDelete: SetNull)
+  facultyLeaveId       String?
+  facultyLeave         FacultyLeave?      @relation(fields: [facultyLeaveId], references: [id], onDelete: SetNull)
   
   entityType           String?            // e.g. "AttendanceRecord", "FacultyLeave", "ExamGrade", "StudentClearance"
   entityId             String?            // ID of target entity
@@ -497,6 +571,7 @@ model ApprovalRequest {
   @@index([payrollRecordId])
   @@index([reimbursementId])
   @@index([bankChangeRequestId])
+  @@index([facultyLeaveId])
 }
 
 model Alumni {
@@ -1488,4 +1563,55 @@ model InventoryItem {
   @@index([departmentId])
   @@index([category])
   @@index([status])
+}
+
+model FacultyLeave {
+  id                  String             @id @default(uuid())
+  requestNumber       String             @unique // e.g. "LV-2026-001"
+  facultyId           String
+  faculty             Faculty            @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  academicYear        String             @default("2026-27")
+  department          String
+  leaveType           String             // "Casual Leave" | "Sick Leave" | "Earned Leave" | "Duty Leave"
+  startDate           String             // "YYYY-MM-DD"
+  endDate             String             // "YYYY-MM-DD"
+  days                Float              @default(1.0)
+  isHalfDay           Boolean            @default(false)
+  halfDaySession      String?            // "Morning" | "Afternoon"
+  reason              String
+  emergencyContact    String?
+  additionalNotes     String?
+  attachmentName      String?
+  attachmentUrl       String?
+  status              String             @default("SUBMITTED") // "SUBMITTED" | "HOD_REVIEW" | "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "WITHDRAWN"
+  rejectionReason     String?
+  approvedBy          String?
+  approvedAt          DateTime?
+  timetableConflicts  String?            // JSON string of affected timetable slots [{ date, courseCode, courseName, section, time, room }]
+  approvalRequests    ApprovalRequest[]
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([facultyId])
+  @@index([status])
+  @@index([academicYear])
+  @@index([startDate])
+}
+
+model FacultyLeaveBalance {
+  id                  String             @id @default(uuid())
+  facultyId           String
+  faculty             Faculty            @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  academicYear        String             @default("2026-27")
+  leaveType           String             // "Casual Leave" | "Sick Leave" | "Earned Leave" | "Duty Leave"
+  entitlement         Float              @default(12.0)
+  used                Float              @default(0.0)
+  pending             Float              @default(0.0)
+  color               String?            @default("bg-blue-500")
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@unique([facultyId, academicYear, leaveType])
+  @@index([facultyId])
+  @@index([academicYear])
 }

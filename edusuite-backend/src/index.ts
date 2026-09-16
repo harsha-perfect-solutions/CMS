@@ -60,6 +60,8 @@ import hodRoutes from "./modules/hod/hod.routes";
 import resultsRoutes from "./modules/results/results.routes";
 import inventoryRoutes from "./modules/inventory/inventory.routes";
 import procurementRoutes from "./modules/procurement/procurement.routes";
+import lessonPlansRoutes from "./modules/lesson-plans/lesson-plans.routes";
+import leaveRoutes from "./modules/leave/leave.routes";
 
 // Register routes
 app.use("/api/auth", authRoutes);
@@ -72,6 +74,10 @@ app.use("/api/employee", employeeRoutes);
 app.use("/api/faculty", employeeRoutes);
 app.use("/api/dean/faculty", employeeRoutes);
 app.use("/api/academics/faculty", employeeRoutes);
+app.use("/api/faculty/lesson-plans", lessonPlansRoutes);
+app.use("/api/academics/lesson-plans", lessonPlansRoutes);
+app.use("/api/faculty/leave", leaveRoutes);
+app.use("/api/leave", leaveRoutes);
 app.use("/api/super-admin", superAdminRoutes);
 app.use("/api/academics", academicsRoutes);
 app.use("/api/academic", academicsRoutes);

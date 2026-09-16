@@ -57,6 +57,7 @@ import { EXAMINATION_NAVIGATION } from "@/config/navigation/examination";
 import { PLACEMENT_NAVIGATION } from "@/config/navigation/placement";
 import { LIBRARIAN_NAVIGATION } from "@/config/navigation/librarian";
 import { TRANSPORT_NAVIGATION } from "@/config/navigation/transport";
+import { FACULTY_NAVIGATION } from "@/config/navigation/faculty";
 
 import type { LoginRole } from "@/config/roles";
 import { hasPermission, type UserPermissionContext } from "@/lib/permissions";
@@ -549,31 +550,13 @@ export function navigationForUser(user: UserPermissionContext, currentPath?: str
      "isTransportOfficer", "isHRManager", "isFinanceOfficer"].includes(flag)
   );
 
-  if (user.role === "staff" && !isAdminStaff && !user.flags.includes("isExamAssistant")) {
-    return [
-      {
-        label: "Faculty Workspace",
-        items: [
-          { title: "Dashboard", url: "/faculty/dashboard", icon: LayoutDashboard },
-          { title: "My Profile", url: "/faculty/profile", icon: User },
-          { title: "Timetable", url: "/faculty/timetable", icon: CalendarRange },
-          { title: "Subjects", url: "/faculty/subjects", icon: BookOpen },
-          { title: "Lesson Plans", url: "/faculty/lesson-plan", icon: ClipboardList },
-          { title: "Attendance", url: "/faculty/attendance", icon: CalendarCheck },
-          { title: "Learning Management", url: "/faculty/lms", icon: BookOpen },
-          { title: "Examinations", url: "/faculty/examinations", icon: FileSpreadsheet },
-          { title: "Research", url: "/faculty/research", icon: TrendingUp },
-          { title: "Leave", url: "/faculty/leave", icon: CalendarRange },
-          { title: "Payroll", url: "/faculty/payroll", icon: Wallet },
-          { title: "Reports", url: "/faculty/reports", icon: BarChart3 },
-          { title: "Notifications", url: "/faculty/notifications", icon: Bell, badge: "3" },
-          { title: "Settings", url: "/faculty/settings", icon: Settings },
-        ],
-      }
-    ];
+  // Faculty Workspace Navigation (Applies to faculty role and standard staff without admin flags)
+  const isFacultyUser = (user.role === "faculty" || user.role === "staff") && !isAdminStaff && !user.flags.includes("isExamAssistant");
+  if (isFacultyUser) {
+    return FACULTY_NAVIGATION;
   }
 
-  const isStaff = user.role === "staff";
+  const isStaff = user.role === "staff" || user.role === "faculty";
   const isExamAssistant = isStaff && user.flags.includes("isExamAssistant");
 
   return navigation
@@ -588,17 +571,35 @@ export function navigationForUser(user: UserPermissionContext, currentPath?: str
 
       let items = section.items
         .filter((item) => {
-          // Hide Pre-Admission, Admission, Library, Hostel, and Transport for HOD users
+          const isFaculty = user.role === "faculty" || user.role === "staff";
           const isHod = user.role === "hod" || user.flags.includes("isHod");
+          const hasAdmissionAccess =
+            user.role === "super-admin" ||
+            user.role === "super_admin" ||
+            user.role === "admin" ||
+            user.flags.includes("isSystemAdmin") ||
+            user.flags.includes("isAdmissionOfficer") ||
+            user.flags.includes("isPrincipal") ||
+            user.flags.includes("isVicePrincipal");
+
+          // Completely remove Pre-Admission and Admission for Faculty / Staff users without explicit admission privileges
           if (
-            isHod &&
+            (isFaculty || isHod) &&
+            !hasAdmissionAccess &&
             (item.title === "Pre-Admission Portal" ||
               item.title === "Admission Office" ||
               item.url === "/pre-admission" ||
               item.url === "/admission" ||
               item.moduleId === "pre-admission" ||
-              item.moduleId === "admission" ||
-              item.title === "Library" ||
+              item.moduleId === "admission")
+          ) {
+            return false;
+          }
+
+          // Hide Library, Hostel, and Transport for HOD users
+          if (
+            isHod &&
+            (item.title === "Library" ||
               item.url === "/library" ||
               item.moduleId === "library" ||
               item.title === "Hostel" ||

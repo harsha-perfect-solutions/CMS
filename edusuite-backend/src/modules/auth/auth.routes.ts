@@ -8,6 +8,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "edusuite_super_secret_key_change_m
 
 export interface AuthenticatedRequest extends Request {
   userId?: string;
+  userEmail?: string;
   userRole?: string;
   userDepartment?: string;
 }
@@ -29,8 +30,9 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
   }
 
   try {
-    const verified = jwt.verify(token, JWT_SECRET) as { id: string; role: string; department?: string };
+    const verified = jwt.verify(token, JWT_SECRET) as { id: string; email?: string; role: string; department?: string };
     req.userId = verified.id;
+    req.userEmail = verified.email;
     req.userRole = verified.role;
     req.userDepartment = verified.department;
     return next();

@@ -454,6 +454,38 @@ router.post(["/:id/accept", "/:id/approve"], authenticateToken, async (req: Auth
           where: { id: request.entityId },
           data: { status: "Present" },
         });
+      } else if ((reqType === "LEAVE" || request.module === "LEAVE") && (request.entityId || request.facultyLeaveId)) {
+        const leaveId = request.facultyLeaveId || request.entityId;
+        if (leaveId) {
+          const leave = await tx.facultyLeave.update({
+            where: { id: leaveId },
+            data: {
+              status: "APPROVED",
+              approvedBy: req.userId || "Approver",
+              approvedAt: new Date(),
+            },
+          });
+          const matchedBal = await tx.facultyLeaveBalance.findFirst({
+            where: {
+              facultyId: leave.facultyId,
+              academicYear: leave.academicYear,
+              leaveType: {
+                contains: leave.leaveType.replace(" Leave", "").trim(),
+                mode: "insensitive",
+              },
+            },
+          });
+          if (matchedBal) {
+            await tx.facultyLeaveBalance.update({
+              where: { id: matchedBal.id },
+              data: {
+                used: matchedBal.used + leave.days,
+                pending: Math.max(0, matchedBal.pending - leave.days),
+              },
+            });
+          }
+
+        }
       }
 
       return finalReq;
@@ -528,6 +560,36 @@ router.post("/:id/reject", authenticateToken, async (req: AuthenticatedRequest, 
         where: { id: request.reimbursementId },
         data: { status: "Rejected" },
       });
+    } else if ((request.requestType === "LEAVE" || request.module === "LEAVE") && (request.entityId || request.facultyLeaveId)) {
+      const leaveId = request.facultyLeaveId || request.entityId;
+      if (leaveId) {
+        const leave = await prisma.facultyLeave.update({
+          where: { id: leaveId },
+          data: {
+            status: "REJECTED",
+            rejectionReason: reason.trim(),
+          },
+        });
+        const matchedBal = await prisma.facultyLeaveBalance.findFirst({
+          where: {
+            facultyId: leave.facultyId,
+            academicYear: leave.academicYear,
+            leaveType: {
+              contains: leave.leaveType.replace(" Leave", "").trim(),
+              mode: "insensitive",
+            },
+          },
+        });
+        if (matchedBal) {
+          await prisma.facultyLeaveBalance.update({
+            where: { id: matchedBal.id },
+            data: {
+              pending: Math.max(0, matchedBal.pending - leave.days),
+            },
+          });
+        }
+
+      }
     }
 
     await sendNotification(request.requestedBy, "Approval Request Rejected", `Your request '${request.title}' (${request.requestNumber}) was rejected. Reason: ${reason.trim()}`);

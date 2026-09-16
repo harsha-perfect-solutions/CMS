@@ -6,10 +6,10 @@ import { toast } from "sonner";
 import type { BookReference } from "@/data/faculty-mock-data";
 
 interface ReferenceBooksProps {
-  books: BookReference[];
+  books?: BookReference[];
 }
 
-export function ReferenceBooks({ books }: ReferenceBooksProps) {
+export function ReferenceBooks({ books = [] }: ReferenceBooksProps) {
   const handleDownload = (title: string) => {
     toast.success(`Downloading resources for: ${title}`, {
       description: "Secure copy download initiated.",
@@ -26,6 +26,18 @@ export function ReferenceBooks({ books }: ReferenceBooksProps) {
         return "bg-violet-500/10 text-violet-600 border-violet-500/20";
     }
   };
+
+  if (!books || books.length === 0) {
+    return (
+      <Panel
+        title="Books & Reference Materials"
+        description="Official syllabus references, NPTEL modules, and video links"
+        className="border border-border bg-card rounded-2xl p-5 shadow-card text-xs"
+      >
+        <p className="text-muted-foreground text-xs italic py-2">No reference books registered.</p>
+      </Panel>
+    );
+  }
 
   return (
     <Panel

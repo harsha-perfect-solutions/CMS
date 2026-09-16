@@ -260,6 +260,14 @@ export function getBasePermissions(
     return { read: true, create: true, update: true, delete: true, approve: true, scope: "global" };
   }
 
+  // Deny Admission & Pre-Admission modules to Faculty, Staff, and HOD by default
+  if (
+    (role === "faculty" || role === "staff" || role === "hod") &&
+    (moduleId === "admission" || moduleId === "pre-admission")
+  ) {
+    return denyAll;
+  }
+
   // Admin and management roles have full access to all modules
   if (
     [
@@ -430,8 +438,25 @@ export function hasPermission(
   moduleId: string,
   action: PermissionAction,
 ): { allowed: boolean; scope: PermissionScope } {
-  // 0. HOD Role Restrictions for Library, Hostel, and Transport
+  // 0. Faculty, Staff, and HOD Role Restrictions for Admission and Pre-Admission
+  const isFacultyUser = user.role === "faculty" || user.role === "staff";
   const isHodUser = user.role === "hod" || user.flags?.includes("isHod");
+  const hasAdmissionPrivilege =
+    user.role === "super-admin" ||
+    user.role === "super_admin" ||
+    user.role === "admin" ||
+    user.flags?.includes("isSystemAdmin") ||
+    user.flags?.includes("isAdmissionOfficer") ||
+    user.flags?.includes("isPrincipal") ||
+    user.flags?.includes("isVicePrincipal");
+
+  if ((isFacultyUser || isHodUser) && !hasAdmissionPrivilege) {
+    if (moduleId === "admission" || moduleId === "pre-admission") {
+      return { allowed: false, scope: "own" };
+    }
+  }
+
+  // 0. HOD Role Restrictions for Library, Hostel, and Transport
   if (isHodUser) {
     if (moduleId === "library" && !user.flags?.includes("isLibraryAdmin")) {
       return { allowed: false, scope: "own" };
@@ -460,8 +485,8 @@ export function hasPermission(
   // 1. Get base permission for the role
   const permissions = getBasePermissions(user.role, moduleId, user.externalPersona);
 
-  // 2. Layer privilege flag overrides on top (if staff)
-  if (user.role === "staff") {
+  // 2. Layer privilege flag overrides on top (if staff or faculty)
+  if (user.role === "staff" || user.role === "faculty") {
     const override = getFlagOverrideForModule(user.flags, moduleId);
     if (override) {
       Object.assign(permissions, override);
@@ -488,7 +513,10 @@ export function canAccessRoute(user: UserPermissionContext, routeUrl: string): b
 
   // Map route URLs to module IDs
   const routeToModuleMap: Record<string, string> = {
+    "/pre-admission": "pre-admission",
     "/admission": "admission",
+    "/dashboard/pre-admission": "pre-admission",
+    "/dashboard/admission": "admission",
     "/academics": "academics",
     "/students": "student-info",
     "/faculty": "hrms",

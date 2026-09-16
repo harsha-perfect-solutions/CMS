@@ -3,10 +3,22 @@ import { Panel } from "@/components/dashboard/panel";
 import type { SectionDetail } from "@/data/faculty-mock-data";
 
 interface AssignedSectionsProps {
-  sections: SectionDetail[];
+  sections?: SectionDetail[];
 }
 
-export function AssignedSections({ sections }: AssignedSectionsProps) {
+export function AssignedSections({ sections = [] }: AssignedSectionsProps) {
+  if (!sections || sections.length === 0) {
+    return (
+      <Panel
+        title="Assigned Sections & Strengths"
+        description="Registered class sections, strengths, and assigned advisor lines"
+        className="border border-border bg-card rounded-2xl p-5 shadow-card text-xs"
+      >
+        <p className="text-muted-foreground text-xs italic py-2">No section details registered.</p>
+      </Panel>
+    );
+  }
+
   return (
     <Panel
       title="Assigned Sections & Strengths"

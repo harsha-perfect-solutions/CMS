@@ -9,11 +9,16 @@ interface LaboratoryDetailsProps {
 }
 
 export function LaboratoryDetails({ labDetails }: LaboratoryDetailsProps) {
+  if (!labDetails) return null;
+
   const handleDownloadManual = () => {
-    toast.success(`Downloading Laboratory Manual: ${labDetails.manualLink}`, {
+    toast.success(`Downloading Laboratory Manual: ${labDetails.manualLink || "Lab_Manual.pdf"}`, {
       description: "Experiment setup guides included.",
     });
   };
+
+  const labVenue = labDetails.labNumber || "Lab-2 (Computing Center)";
+  const equipmentCount = labDetails.equipmentCount || 60;
 
   return (
     <Panel
@@ -27,13 +32,13 @@ export function LaboratoryDetails({ labDetails }: LaboratoryDetailsProps) {
           <div>
             <p className="text-[0.6rem] uppercase font-extrabold tracking-wider text-muted-foreground">Lab Venue</p>
             <p className="text-sm font-extrabold mt-1 text-foreground flex items-center justify-center gap-1">
-              <MapPin className="size-3.5 text-primary" /> {labDetails.labNumber}
+              <MapPin className="size-3.5 text-primary" /> {labVenue}
             </p>
           </div>
           <div>
             <p className="text-[0.6rem] uppercase font-extrabold tracking-wider text-muted-foreground">Equipment Strength</p>
             <p className="text-sm font-extrabold mt-1 text-foreground flex items-center justify-center gap-1">
-              <Cpu className="size-3.5 text-primary" /> {labDetails.equipmentCount} Systems
+              <Cpu className="size-3.5 text-primary" /> {equipmentCount} Systems
             </p>
           </div>
         </div>

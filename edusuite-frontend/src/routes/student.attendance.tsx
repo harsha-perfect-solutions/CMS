@@ -1,97 +1,128 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   CalendarCheck,
   BookOpen,
   Clock,
-  Calendar,
   FileText,
-  BarChart2,
   Filter,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import {
   AcademicYearOption,
   AttendanceTab,
   SubjectAttendanceItem,
+  StudentAttendanceProfile,
+  TodayScheduleItem,
+  AttendanceHistoryRecord,
   YEAR_TO_SEMESTERS_MAP,
 } from "@/components/student-attendance/types";
-import {
-  MOCK_STUDENT_ATTENDANCE_PROFILE,
-  MOCK_ALL_SUBJECTS,
-  MOCK_TODAY_SCHEDULE,
-  MOCK_ATTENDANCE_HISTORY,
-  MOCK_CALENDAR_ITEMS,
-  MOCK_LEAVE_BALANCE,
-  MOCK_LEAVE_REQUESTS,
-} from "@/components/student-attendance/mock-data";
+import api from "@/lib/api";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+
 import { AttendanceSummary } from "@/components/student-attendance/attendance-summary";
 import { SubjectAttendance } from "@/components/student-attendance/subject-attendance";
 import { AttendanceHistory } from "@/components/student-attendance/attendance-history";
-import { AttendanceCalendar } from "@/components/student-attendance/attendance-calendar";
 import { LeaveManagement } from "@/components/student-attendance/leave-management";
-import { AttendanceReports } from "@/components/student-attendance/reports";
 import { AttendanceDrawer } from "@/components/student-attendance/attendance-drawer";
 import { LeaveModal } from "@/components/student-attendance/leave-modal";
 
 export const Route = createFileRoute("/student/attendance")({
   head: () => ({
-    meta: [{ title: "Attendance Management — EduSuite Pro" }],
+    meta: [{ title: "Student Attendance — EduSuite Pro" }],
   }),
   component: StudentAttendancePage,
 });
 
 function StudentAttendancePage() {
   const [activeTab, setActiveTab] = useState<AttendanceTab>("summary");
-  
-  // Year -> Semester dynamic state synchronization
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Year -> Semester filter state
   const [selectedYear, setSelectedYear] = useState<AcademicYearOption>("3rd Year");
   const availableSemesters = YEAR_TO_SEMESTERS_MAP[selectedYear] || [5, 6];
-  const [selectedSemester, setSelectedSemester] = useState<number>(availableSemesters[0] ?? 5);
+  const [selectedSemester, setSelectedSemester] = useState<number>(5);
 
   const [selectedSubject, setSelectedSubject] = useState<SubjectAttendanceItem | null>(null);
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
 
-  // Dynamic leave requests & balance state
-  const [leaveRequests, setLeaveRequests] = useState(MOCK_LEAVE_REQUESTS);
-  const [leaveBalance, setLeaveBalance] = useState(MOCK_LEAVE_BALANCE);
+  // Leave requests & balance state
+  const [leaveRequests, setLeaveRequests] = useState<any[]>([
+    {
+      id: "LV-2026-001",
+      leaveType: "Medical Leave",
+      reason: "Viral fever - Doctor advised 2 days bed rest",
+      appliedDate: "10 Sep 2026",
+      fromDate: "10 Sep 2026",
+      toDate: "11 Sep 2026",
+      days: 2,
+      status: "Approved",
+      approvedBy: "Dr. Ravi Kumar (Class Advisor)",
+      remarks: "Medical certificate verified and approved.",
+      documentName: "medical_cert.pdf",
+    },
+  ]);
+  const [leaveBalance, setLeaveBalance] = useState({
+    totalLeaves: 12,
+    availedLeaves: 2,
+    availableLeaves: 10,
+    medicalLeaves: 2,
+    casualLeaves: 0,
+    onDutyLeaves: 0,
+    pending: 0,
+  });
 
-  // Dynamic subjects filter based on selected Year & Semester
-  const displayedSubjects = React.useMemo(() => {
-    const matched = MOCK_ALL_SUBJECTS.filter(
-      (sub) => sub.academicYear === selectedYear && sub.semester === selectedSemester
-    );
-    if (matched.length > 0) return matched;
-    const semMatched = MOCK_ALL_SUBJECTS.filter((sub) => sub.semester === selectedSemester);
-    if (semMatched.length > 0) return semMatched;
-    return MOCK_ALL_SUBJECTS.filter((s) => s.semester === 5);
-  }, [selectedYear, selectedSemester]);
+  // Real data state from PostgreSQL
+  const [dbProfile, setDbProfile] = useState<StudentAttendanceProfile | null>(null);
+  const [dbSubjects, setDbSubjects] = useState<SubjectAttendanceItem[]>([]);
+  const [dbHistory, setDbHistory] = useState<AttendanceHistoryRecord[]>([]);
 
-  // Dynamic student profile metrics based on selected semester subjects
-  const currentProfile = React.useMemo(() => {
-    let totalConducted = 0;
-    let totalAttended = 0;
-    let totalAbsent = 0;
-    let totalLeave = 0;
+  // Fetch real student attendance from PostgreSQL via authenticated endpoint
+  const fetchStudentAttendance = useCallback(async (isRefresh = false) => {
+    try {
+      if (!isRefresh) setLoading(true);
+      setError(null);
 
-    displayedSubjects.forEach((sub) => {
-      totalConducted += sub.conducted;
-      totalAttended += sub.attended;
-      totalAbsent += sub.absent;
-      totalLeave += sub.leave;
-    });
+      const res = await api.get("/api/attendance/student/my-attendance");
 
-    const pct = totalConducted > 0 ? Number(((totalAttended / totalConducted) * 100).toFixed(1)) : 85.0;
+      if (res.status === 200 && res.data) {
+        if (res.data.profile) {
+          setDbProfile(res.data.profile);
+          if (res.data.profile.semester) {
+            setSelectedSemester(res.data.profile.semester);
+          }
+          if (res.data.profile.academicYear) {
+            setSelectedYear(res.data.profile.academicYear);
+          }
+        }
+        if (Array.isArray(res.data.subjects)) {
+          setDbSubjects(res.data.subjects);
+        }
+        if (Array.isArray(res.data.history)) {
+          setDbHistory(res.data.history);
+        }
+      } else {
+        setError(res.data?.error || "Unable to fetch student attendance records.");
+      }
+    } catch (err: any) {
+      setError(err.message || "Network error loading attendance.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-    return {
-      ...MOCK_STUDENT_ATTENDANCE_PROFILE,
-      academicYear: selectedYear,
-      semester: selectedSemester,
-      overallAttendancePct: pct,
-      presentClasses: totalAttended,
-      absentClasses: totalAbsent,
-      leaveClasses: totalLeave,
-    };
-  }, [displayedSubjects, selectedYear, selectedSemester]);
+  useEffect(() => {
+    fetchStudentAttendance();
+  }, [fetchStudentAttendance]);
+
+  const handleRefresh = async () => {
+    toast.info("Synchronizing attendance records with PostgreSQL...");
+    await fetchStudentAttendance(true);
+    toast.success("Attendance synchronized with real-time class submittals.");
+  };
 
   const handleYearChange = (year: AcademicYearOption) => {
     setSelectedYear(year);
@@ -108,10 +139,10 @@ function StudentAttendancePage() {
     documentName?: string;
   }) => {
     const created: any = {
-      id: `LV-2025-0${Math.floor(40 + Math.random() * 50)}`,
+      id: `LV-2026-0${Math.floor(10 + Math.random() * 89)}`,
       leaveType: newLeave.leaveType,
       reason: newLeave.reason,
-      appliedDate: "Jan 22, 2025",
+      appliedDate: new Date().toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" }),
       fromDate: newLeave.fromDate,
       toDate: newLeave.toDate,
       days: 1,
@@ -128,7 +159,68 @@ function StudentAttendancePage() {
       pending: prev.pending + 1,
       availableLeaves: Math.max(prev.availableLeaves - 1, 0),
     }));
+    toast.success("Leave application submitted to your class advisor.");
   };
+
+  // Derive Today's schedule from latest history logs
+  const todaySchedule: TodayScheduleItem[] = useMemo(() => {
+    const targetDateStr = new Date().toISOString().split("T")[0];
+    const todaysLogs = dbHistory.filter((h) => h.date === targetDateStr);
+
+    if (todaysLogs.length > 0) {
+      return todaysLogs.map((log) => ({
+        id: log.id,
+        period: log.period,
+        timing: log.timeSlot,
+        subjectCode: log.subjectCode,
+        subjectName: log.subjectName,
+        facultyName: log.facultyName,
+        room: log.room,
+        status: (log.status === "Present" ? "Present" : log.status === "Absent" ? "Absent" : "Pending") as "Present" | "Absent" | "Pending",
+        mode: "Manual",
+      }));
+    }
+
+    // If no records logged today yet, display active enrolled subjects as pending
+    return dbSubjects.slice(0, 3).map((sub, idx) => ({
+      id: `sch-${sub.id}-${idx}`,
+      period: `Period ${idx + 1}`,
+      timing: idx === 0 ? "09:00 AM - 10:00 AM" : idx === 1 ? "10:15 AM - 11:15 AM" : "11:30 AM - 12:30 PM",
+      subjectCode: sub.subjectCode,
+      subjectName: sub.subjectName,
+      facultyName: sub.facultyName,
+      room: "LH-301",
+      status: "Pending" as const,
+      mode: "Manual" as const,
+    }));
+  }, [dbHistory, dbSubjects]);
+
+  // Compute active profile with fallback to empty state
+  const currentProfile: StudentAttendanceProfile = useMemo(() => {
+    if (dbProfile) return dbProfile;
+
+    return {
+      studentId: "",
+      rollNumber: "",
+      name: "Student",
+      avatarUrl: "",
+      program: "B.Tech",
+      branch: "CSE",
+      section: "A",
+      academicYear: selectedYear,
+      semester: selectedSemester,
+      overallAttendancePct: 0,
+      todayAttendanceStatus: "Pending",
+      presentClasses: 0,
+      absentClasses: 0,
+      leaveClasses: 0,
+      condonationStatus: "Eligible",
+      currentStreak: 0,
+      classesRequiredFor75: 0,
+      classesRequiredFor85: 0,
+      lowAttendanceCount: 0,
+    };
+  }, [dbProfile, selectedYear, selectedSemester]);
 
   const tabsConfig = [
     { id: "summary", label: "Attendance Summary", icon: CalendarCheck },
@@ -137,9 +229,30 @@ function StudentAttendancePage() {
     { id: "leave-management", label: "Leave Management", icon: FileText },
   ] as const;
 
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto py-24 flex flex-col items-center justify-center space-y-4">
+        <Loader2 className="size-10 text-primary animate-spin" />
+        <p className="text-sm font-bold text-foreground">Loading your attendance records from database...</p>
+        <p className="text-xs text-muted-foreground">Connecting to college attendance database and computing session rates.</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-2xl mx-auto my-12 p-8 border border-destructive/20 bg-destructive/5 rounded-3xl text-center space-y-4">
+        <h3 className="text-base font-bold text-destructive">Unable to load attendance</h3>
+        <p className="text-xs text-muted-foreground">{error}</p>
+        <Button onClick={() => fetchStudentAttendance()} variant="outline" className="gap-2">
+          <RefreshCw className="size-4" /> Try Again
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      
       {/* 1. ACADEMIC YEAR -> SEMESTER DYNAMIC FILTER HEADER BAR */}
       <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -148,7 +261,9 @@ function StudentAttendancePage() {
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-900 dark:text-white">Academic Scope Filter</h3>
-            <p className="text-xs text-slate-500">Select Academic Year to automatically update Semester options</p>
+            <p className="text-xs text-slate-500">
+              {currentProfile.name} ({currentProfile.rollNumber}) &middot; {currentProfile.branch} Section {currentProfile.section}
+            </p>
           </div>
         </div>
 
@@ -183,6 +298,20 @@ function StudentAttendancePage() {
               ))}
             </select>
           </div>
+
+          {/* REFRESH BUTTON */}
+          <div className="pt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              className="h-9 gap-1.5 text-xs font-semibold rounded-xl"
+              title="Refresh attendance records from database"
+            >
+              <RefreshCw className="size-3.5" />
+              Sync
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -215,8 +344,8 @@ function StudentAttendancePage() {
         {activeTab === "summary" && (
           <AttendanceSummary
             profile={currentProfile}
-            schedule={MOCK_TODAY_SCHEDULE}
-            subjects={displayedSubjects}
+            schedule={todaySchedule}
+            subjects={dbSubjects}
             onOpenLeaveModal={() => setIsLeaveModalOpen(true)}
             onSelectTab={setActiveTab}
           />
@@ -224,13 +353,13 @@ function StudentAttendancePage() {
 
         {activeTab === "subject-attendance" && (
           <SubjectAttendance
-            subjects={displayedSubjects}
+            subjects={dbSubjects}
             onSelectSubject={setSelectedSubject}
           />
         )}
 
         {activeTab === "history" && (
-          <AttendanceHistory logs={MOCK_ATTENDANCE_HISTORY} />
+          <AttendanceHistory logs={dbHistory} />
         )}
 
         {activeTab === "leave-management" && (
@@ -254,7 +383,6 @@ function StudentAttendancePage() {
         onClose={() => setIsLeaveModalOpen(false)}
         onSubmitLeave={handleApplyLeave}
       />
-
     </div>
   );
 }

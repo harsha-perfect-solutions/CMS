@@ -38,6 +38,7 @@ import {
   Coffee,
   X,
   FlaskConical,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -155,6 +156,7 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
   const [liveStatusLoading, setLiveStatusLoading] = useState<boolean>(false);
   const [liveStatusError, setLiveStatusError] = useState<boolean>(false);
   const [selectedPeriod, setSelectedPeriod] = useState<number>(2);
+  const [facultyLiveStatusFilter, setFacultyLiveStatusFilter] = useState<"ALL" | "FREE" | "IN_CLASS" | "ON_LEAVE">("ALL");
 
   // Modal State for Faculty Full-Day Timetable
   const [isTimetableModalOpen, setIsTimetableModalOpen] = useState(false);
@@ -440,7 +442,16 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
 
   const handleSubmitAttendance = async () => {
     setSubmittingAttendance(true);
-    const res = await submitAttendanceMark("CSE-3A", 2, studentRoster);
+    const res = await submitAttendanceMark({
+      classId: selectedClass || "CSE-3A",
+      subjectId: "CS302",
+      date: new Date().toISOString().split("T")[0],
+      period: 2,
+      records: studentRoster.map((s) => ({
+        studentId: s.id,
+        status: s.status,
+      })),
+    });
     setSubmittingAttendance(false);
     if (res.success) {
       toast.success(res.message);
@@ -448,20 +459,29 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
   };
 
   const handleToggleSyllabusUnit = async (courseId: string, unitId: string) => {
+    let nextStatus: "Completed" | "In Progress" | "Remaining" = "Completed";
+    let nextPct = 100;
+
     setSyllabusList((prev) =>
       prev.map((item) => {
         if (item.id === courseId) {
-          const updatedUnits = item.units.map((u) =>
-            u.id === unitId ? { ...u, completed: !u.completed } : u
-          );
-          const completedCount = updatedUnits.filter((u) => u.completed).length;
+          const updatedUnits = item.units.map((u) => {
+            if (u.id === unitId) {
+              const isComp = u.status === "Completed";
+              nextStatus = isComp ? "In Progress" : "Completed";
+              nextPct = isComp ? 50 : 100;
+              return { ...u, status: nextStatus, completionPct: nextPct };
+            }
+            return u;
+          });
+          const completedCount = updatedUnits.filter((u) => u.status === "Completed").length;
           const overallProgressPct = Math.round((completedCount / updatedUnits.length) * 100);
           return { ...item, units: updatedUnits, overallProgressPct };
         }
         return item;
       })
     );
-    await updateSyllabusUnitStatus(courseId, unitId, true);
+    await updateSyllabusUnitStatus(courseId, unitId, nextStatus, nextPct);
     toast.success("Syllabus unit status updated");
   };
 
@@ -498,6 +518,55 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
     });
   }, [facultyStatuses, search, selectedDeptFilter]);
 
+  // Identify active / logged in faculty's card (if user is staff/faculty/HOD)
+  const currentFacultyCard = useMemo(() => {
+    if (!filteredFacultyStatus.length) return null;
+    const personaEmail = (roleCtx?.profile?.email || "").toLowerCase().trim();
+    const personaName = (roleCtx?.profile?.personaName || "").toLowerCase().trim();
+
+    if (personaEmail) {
+      const match = filteredFacultyStatus.find((f) => f.email && f.email.toLowerCase() === personaEmail);
+      if (match) return match;
+    }
+    if (personaName) {
+      const match = filteredFacultyStatus.find(
+        (f) => f.name && (f.name.toLowerCase().includes(personaName) || personaName.includes(f.name.toLowerCase()))
+      );
+      if (match) return match;
+    }
+    if (isHod) {
+      const hodMatch = filteredFacultyStatus.find((f) => f.designation?.toLowerCase().includes("hod"));
+      if (hodMatch) return hodMatch;
+    }
+    return null;
+  }, [filteredFacultyStatus, roleCtx?.profile, isHod]);
+
+  // Other faculty members with status filtering
+  const otherFacultyMembers = useMemo(() => {
+    let list = filteredFacultyStatus;
+    if (currentFacultyCard) {
+      list = list.filter((f) => f.id !== currentFacultyCard.id);
+    }
+    if (facultyLiveStatusFilter === "FREE") {
+      list = list.filter((f) => f.status === "FREE");
+    } else if (facultyLiveStatusFilter === "IN_CLASS") {
+      list = list.filter((f) => f.status === "IN CLASS / WORKING");
+    } else if (facultyLiveStatusFilter === "ON_LEAVE") {
+      list = list.filter((f) => f.status === "ON LEAVE");
+    }
+    return list;
+  }, [filteredFacultyStatus, currentFacultyCard, facultyLiveStatusFilter]);
+
+  const facultyStatusCounts = useMemo(() => {
+    const pool = currentFacultyCard ? filteredFacultyStatus.filter((f) => f.id !== currentFacultyCard.id) : filteredFacultyStatus;
+    return {
+      all: pool.length,
+      free: pool.filter((f) => f.status === "FREE").length,
+      inClass: pool.filter((f) => f.status === "IN CLASS / WORKING").length,
+      onLeave: pool.filter((f) => f.status === "ON LEAVE").length,
+    };
+  }, [filteredFacultyStatus, currentFacultyCard]);
+
   const filteredAllClassesAttendance = useMemo(() => {
     return allClassesAttendance.filter((c) => {
       const matchesSearch =
@@ -507,6 +576,132 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
       return matchesSearch && matchesDept;
     });
   }, [allClassesAttendance, search, selectedDeptFilter]);
+
+  const renderStatusMatrixCard = (f: LiveFacultyStatus, isMyCard: boolean = false) => {
+    const isFree = f.status === "FREE";
+    const isInClass = f.status === "IN CLASS / WORKING";
+    const isOnLeave = f.status === "ON LEAVE";
+
+    return (
+      <div
+        key={f.id}
+        onClick={() => handleOpenFacultySchedule(f.name)}
+        className={`p-4 rounded-2xl border transition-all cursor-pointer group relative space-y-3.5 ${
+          isMyCard
+            ? "bg-primary/5 border-primary shadow-sm hover:border-primary hover:shadow-md"
+            : "bg-card border-border/80 shadow-xs hover:border-primary/60 hover:shadow-md"
+        }`}
+      >
+        {/* 1. FACULTY IDENTITY */}
+        <div className="flex items-start justify-between gap-2.5">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <div className="size-9 rounded-xl bg-primary/10 text-primary border border-primary/20 flex items-center justify-center font-bold text-xs shrink-0">
+              {f.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
+            </div>
+            <div className="space-y-0.5 min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[0.65rem] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-bold border border-border/60">
+                  {f.rollNumber || `FAC-${f.department.slice(0, 3)}`}
+                </span>
+                <span className="text-[0.68rem] text-primary font-semibold">{f.designation || "Faculty Member"}</span>
+                {isMyCard && (
+                  <Badge className="bg-primary text-white text-[10px] h-4 px-1.5 font-bold">
+                    MY CARD
+                  </Badge>
+                )}
+              </div>
+              <h3 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 pt-0.5 truncate">
+                {f.name}
+                <ExternalLink className="size-3 opacity-0 group-hover:opacity-100 transition-opacity text-primary shrink-0" />
+              </h3>
+              <p className="text-xs text-muted-foreground font-mono">{f.department} Department</p>
+            </div>
+          </div>
+
+          {/* Status Badge */}
+          {isFree && (
+            <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 font-bold shrink-0 text-[11px] px-2.5 py-1">
+              🟢 FREE
+            </Badge>
+          )}
+          {isInClass && (
+            <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300 border-blue-300 dark:border-blue-800 font-bold shrink-0 text-[11px] px-2.5 py-1">
+              🔵 IN CLASS
+            </Badge>
+          )}
+          {isOnLeave && (
+            <Badge className="bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border-rose-300 dark:border-rose-800 font-bold shrink-0 text-[11px] px-2.5 py-1">
+              🔴 ON LEAVE
+            </Badge>
+          )}
+        </div>
+
+        {/* 2. DOWNWARD STATUS BANNER (↓ Status) */}
+        <div
+          className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+            isFree
+              ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+              : isInClass
+              ? "bg-blue-500/10 border-blue-500/20 text-blue-700 dark:text-blue-300"
+              : "bg-rose-500/10 border-rose-500/20 text-rose-700 dark:text-rose-300"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase font-mono font-bold tracking-wider opacity-70">Status:</span>
+            <span className="font-bold">
+              {isFree ? "Free for Substitution / Unassigned" : isInClass ? "Active Lecture in Session" : (f.leaveReason || "Approved Leave")}
+            </span>
+          </div>
+          <span className="text-[11px] font-mono opacity-80">Period {selectedPeriod}</span>
+        </div>
+
+        {/* 3. CLASS ROW (↓ Class) */}
+        <div className="p-2.5 rounded-xl bg-muted/40 border border-border/70 text-xs flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <BookOpen className="size-3.5 text-primary shrink-0" />
+            <span className="text-[10px] uppercase font-mono font-bold text-muted-foreground shrink-0">Class:</span>
+            <span className="font-semibold text-foreground truncate">
+              {isInClass ? (
+                <>
+                  <strong className="text-primary font-bold">{f.currentClass || "Assigned Section"}</strong>
+                  {f.subject && <span className="text-muted-foreground ml-1.5 font-normal">({f.subject})</span>}
+                </>
+              ) : isFree ? (
+                <span className="text-muted-foreground font-medium">Unassigned (Free Period)</span>
+              ) : (
+                <span className="text-muted-foreground font-medium">No Class Scheduled</span>
+              )}
+            </span>
+          </div>
+        </div>
+
+        {/* 4. ROOM ROW (↓ Room) */}
+        <div className="p-2.5 rounded-xl bg-muted/40 border border-border/70 text-xs flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <MapPin className="size-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-[10px] uppercase font-mono font-bold text-muted-foreground shrink-0">Room:</span>
+            <span className="font-semibold text-foreground truncate">
+              {isInClass ? (
+                <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{f.roomNo || "Block Hall"}</strong>
+              ) : isFree ? (
+                <span className="text-muted-foreground font-medium">{f.roomNo || "Faculty Cabin / Dept Lounge"}</span>
+              ) : (
+                <span className="text-muted-foreground font-medium">Off-Campus</span>
+              )}
+            </span>
+          </div>
+        </div>
+
+        {/* 5. FOOTER LINK */}
+        <div className="flex items-center justify-between text-[0.68rem] text-muted-foreground pt-1 border-t border-border/50">
+          <span className="font-mono">Slot: {f.timeSlot}</span>
+          <span className="text-primary font-semibold flex items-center gap-1 group-hover:underline">
+            Full Schedule <Calendar className="size-3" />
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -971,7 +1166,7 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
           {liveStatusLoading ? (
             <div className="p-12 text-center text-xs text-muted-foreground flex flex-col items-center gap-2 border rounded-2xl bg-card">
               <RefreshCw className="size-6 animate-spin text-primary" />
-              Loading real-time faculty status matrix from InsForge PostgreSQL...
+              Loading real-time faculty status matrix from PostgreSQL Database...
             </div>
           ) : liveStatusError ? (
             <div className="p-12 text-center text-xs text-rose-600 border border-rose-200 dark:border-rose-900 rounded-2xl bg-rose-50/50 dark:bg-rose-950/20 space-y-3">
@@ -985,76 +1180,93 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
               No faculty members found for the selected department/filter.
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredFacultyStatus.map((f) => (
-                <div
-                  key={f.id}
-                  onClick={() => handleOpenFacultySchedule(f.name)}
-                  className="p-4 rounded-2xl border border-border/80 bg-card space-y-3 shadow-sm hover:border-primary hover:shadow-md transition-all cursor-pointer group relative"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[0.65rem] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-bold border border-border/60">
-                          {f.rollNumber || `FAC-${f.department.slice(0, 3)}`}
-                        </span>
-                        <span className="text-[0.68rem] text-primary font-semibold">{f.designation || "Faculty Member"}</span>
-                      </div>
-                      <h3 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 pt-0.5">
-                        {f.name} <ExternalLink className="size-3 opacity-0 group-hover:opacity-100 transition-opacity text-primary" />
-                      </h3>
-                      <p className="text-xs text-muted-foreground font-mono">{f.department} Department</p>
-                      {f.email && <p className="text-[0.68rem] text-muted-foreground/80 truncate max-w-[200px]">{f.email}</p>}
-                    </div>
-
-                    {f.status === "FREE" && (
-                      <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300 font-bold shrink-0">
-                        🟢 FREE
-                      </Badge>
-                    )}
-                    {f.status === "IN CLASS / WORKING" && (
-                      <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-300 font-bold shrink-0">
-                        🔵 IN CLASS
-                      </Badge>
-                    )}
-                    {f.status === "ON LEAVE" && (
-                      <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-300 font-bold shrink-0">
-                        🔴 ON LEAVE
-                      </Badge>
-                    )}
+            <div className="space-y-6">
+              {/* 1. MY FACULTY CARD (If logged in user matches a faculty/HOD) */}
+              {currentFacultyCard && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <UserCheck className="size-3.5 text-primary" /> My Live Status &mdash; Period {selectedPeriod}
+                    </h3>
+                    <Badge variant="outline" className="font-mono text-[10px] text-primary border-primary/30 bg-primary/5">
+                      Active Profile
+                    </Badge>
                   </div>
-
-                  {f.status === "IN CLASS / WORKING" && (
-                    <div className="p-3 rounded-xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-900/30 text-xs space-y-1">
-                      <p className="font-bold text-blue-900 dark:text-blue-300">{f.subject}</p>
-                      <div className="flex items-center justify-between text-muted-foreground font-mono text-[0.7rem] pt-1">
-                        <span>Master Timetable Class: <strong className="text-foreground">{f.currentClass}</strong></span>
-                        <span>Room: <strong className="text-foreground">{f.roomNo}</strong></span>
-                      </div>
-                      <p className="text-[0.68rem] font-mono text-blue-600 dark:text-blue-400">Slot: {f.timeSlot}</p>
-                    </div>
-                  )}
-
-                  {f.status === "FREE" && (
-                    <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/50 text-xs">
-                      <p className="text-emerald-700 dark:text-emerald-300 font-medium">Unassigned in Period {selectedPeriod}</p>
-                      <p className="text-[0.68rem] text-muted-foreground">Available for proxy / substitution</p>
-                    </div>
-                  )}
-
-                  {f.status === "ON LEAVE" && (
-                    <div className="p-3 rounded-xl bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/50 text-xs">
-                      <p className="text-rose-700 dark:text-rose-300 font-semibold">{f.leaveReason || "Approved Leave"}</p>
-                      <p className="text-[0.68rem] text-muted-foreground">Substitute assigned by HOD</p>
-                    </div>
-                  )}
-
-                  <div className="text-[0.68rem] text-primary/80 font-semibold flex items-center justify-end gap-1 pt-1 border-t border-border/40">
-                    <span>Click to view full-day timetable</span>
-                    <Calendar className="size-3" />
+                  <div className="max-w-xl">
+                    {renderStatusMatrixCard(currentFacultyCard, true)}
                   </div>
                 </div>
-              ))}
+              )}
+
+              {/* 2. OTHER FACULTY MEMBERS SECTION */}
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <Users className="size-4 text-primary" />
+                      <h3 className="font-bold text-sm text-foreground">Other faculty members</h3>
+                    </div>
+                    <Badge variant="secondary" className="font-mono text-xs">
+                      {otherFacultyMembers.length} Members
+                    </Badge>
+                  </div>
+
+                  {/* Status Quick Filter Buttons */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                    <button
+                      onClick={() => setFacultyLiveStatusFilter("ALL")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                        facultyLiveStatusFilter === "ALL"
+                          ? "bg-primary text-white shadow-xs"
+                          : "bg-muted/40 text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      All ({facultyStatusCounts.all})
+                    </button>
+                    <button
+                      onClick={() => setFacultyLiveStatusFilter("FREE")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                        facultyLiveStatusFilter === "FREE"
+                          ? "bg-emerald-600 text-white shadow-xs"
+                          : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
+                      }`}
+                    >
+                      🟢 Free ({facultyStatusCounts.free})
+                    </button>
+                    <button
+                      onClick={() => setFacultyLiveStatusFilter("IN_CLASS")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                        facultyLiveStatusFilter === "IN_CLASS"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20"
+                      }`}
+                    >
+                      🔵 In Class ({facultyStatusCounts.inClass})
+                    </button>
+                    <button
+                      onClick={() => setFacultyLiveStatusFilter("ON_LEAVE")}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                        facultyLiveStatusFilter === "ON_LEAVE"
+                          ? "bg-rose-600 text-white shadow-xs"
+                          : "bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20"
+                      }`}
+                    >
+                      🔴 On Leave ({facultyStatusCounts.onLeave})
+                    </button>
+                  </div>
+                </div>
+
+                {/* Faculty Cards Grid */}
+                {otherFacultyMembers.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-muted-foreground border border-dashed rounded-2xl bg-card">
+                    No faculty members matching the status filter "{facultyLiveStatusFilter}".
+                  </div>
+                ) : (
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {otherFacultyMembers.map((f) => renderStatusMatrixCard(f, false))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1089,7 +1301,7 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between text-xs font-bold text-muted-foreground uppercase">
                   <span>Syllabus Unit Completion Ledger</span>
-                  <span>{syl.units.filter((u) => u.completed).length} / {syl.units.length} Units Done</span>
+                  <span>{syl.units.filter((u) => u.status === "Completed").length} / {syl.units.length} Units Done</span>
                 </div>
                 <Progress value={syl.overallProgressPct} className="h-2.5 rounded-full" />
               </div>
@@ -1100,17 +1312,17 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
                     key={unit.id}
                     onClick={() => handleToggleSyllabusUnit(syl.id, unit.id)}
                     className={`p-3.5 rounded-xl border text-xs space-y-2 cursor-pointer transition-all ${
-                      unit.completed ? "bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-900/50" : "bg-card border-border/80 hover:border-primary/40"
+                      unit.status === "Completed" ? "bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-900/50" : "bg-card border-border/80 hover:border-primary/40"
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold font-mono text-primary">Unit {unit.unitNo}: {unit.title}</span>
-                      <Badge className={unit.completed ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"}>
-                        {unit.completed ? "Completed" : "Pending"}
+                      <span className="font-bold font-mono text-primary">Unit {unit.unitNumber}: {unit.unitTitle}</span>
+                      <Badge className={unit.status === "Completed" ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"}>
+                        {unit.status}
                       </Badge>
                     </div>
-                    <p className="text-muted-foreground text-[0.75rem]">{unit.topicsCovered}</p>
-                    <p className="text-[0.68rem] font-mono text-muted-foreground">Target Hours: {unit.estimatedHours} hrs</p>
+                    <p className="text-muted-foreground text-[0.75rem]">{unit.unitTitle}</p>
+                    <p className="text-[0.68rem] font-mono text-muted-foreground">Progress: {unit.completionPct}% completed</p>
                   </div>
                 ))}
               </div>
@@ -1130,10 +1342,10 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
                 </div>
                 <div>
                   <DialogTitle className="text-lg font-bold text-foreground">
-                    {selectedFacultySchedule?.facultyName || "Faculty Timetable"}
+                    {selectedFacultySchedule?.name || "Faculty Timetable"}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-muted-foreground font-mono mt-0.5">
-                    {selectedFacultySchedule?.department} Department &middot; Employee ID: {selectedFacultySchedule?.empId}
+                    {selectedFacultySchedule?.department} Department &middot; ID: {selectedFacultySchedule?.facultyId}
                   </DialogDescription>
                 </div>
               </div>
@@ -1141,10 +1353,10 @@ export function FacultyModuleView({ initialTab = "faculty-status" }: { initialTa
               {selectedFacultySchedule && (
                 <div className="flex items-center gap-2">
                   <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 font-mono font-bold text-xs px-2.5 py-1">
-                    🟢 {selectedFacultySchedule.freePeriodsCount} Free Slots
+                    🟢 {selectedFacultySchedule.periods?.filter((p) => p.status === "FREE").length || 0} Free Slots
                   </Badge>
                   <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300 font-mono font-bold text-xs px-2.5 py-1">
-                    🔵 {selectedFacultySchedule.teachingPeriodsCount} Teaching
+                    🔵 {selectedFacultySchedule.periods?.filter((p) => p.status === "IN CLASS").length || 0} Teaching
                   </Badge>
                 </div>
               )}
