@@ -22,8 +22,8 @@ class ApiClient {
   ): Promise<ApiResponse<T>> {
     const token =
       typeof window !== "undefined"
-        ? localStorage.getItem("token") || localStorage.getItem("cms_token") || "super-admin-auth-token"
-        : "super-admin-auth-token";
+        ? localStorage.getItem("token") || localStorage.getItem("cms_token") || null
+        : null;
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",

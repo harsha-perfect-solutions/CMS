@@ -569,10 +569,16 @@ router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, re
   const branch = (req.query.branch as string || "CSE").toUpperCase().trim();
   const semester = parseInt(req.query.semester as string || "5", 10);
   const section = (req.query.section as string || "Section A").trim();
+  const academicYear = (req.query.academicYear as string) || "2026-27";
 
   try {
     const records = await prisma.masterTimetable.findMany({
-      where: { branch, semester, section },
+      where: {
+        branch,
+        semester,
+        section,
+        ...(academicYear ? { academicYear } : {}),
+      },
       include: { faculty: true, course: true },
       orderBy: [{ day: "asc" }, { periodNumber: "asc" }],
     });
@@ -592,13 +598,14 @@ router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, re
       branch: r.branch,
       semester: r.semester,
       section: r.section,
+      academicYear: r.academicYear || "2026-27",
     }));
 
     return res.json({
       branch,
       semester,
       section,
-      academicYear: "2026-2027",
+      academicYear: records.length > 0 ? (records[0].academicYear || academicYear) : academicYear,
       schedule,
     });
   } catch (error: any) {
@@ -608,20 +615,23 @@ router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, re
 
 // PUT /api/academics/timetable/update-period: Update single period assignment with conflict validation
 router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  const { branch, semester, section, day, periodNumber, facultyId, courseId, roomNo, isLab } = req.body;
+  const { branch, semester, section, day, periodNumber, facultyId, courseId, roomNo, isLab, academicYear: reqAcademicYear } = req.body;
 
   if (!branch || !semester || !section || !day || !periodNumber) {
     return res.status(400).json({ error: "branch, semester, section, day, and periodNumber are required." });
   }
 
+  const academicYear = reqAcademicYear || "2026-27";
+
   try {
-    // Conflict check: Ensure faculty is not teaching another class in the same day and period
+    // 1. Conflict check: Ensure faculty is not teaching another class in the same day and period
     if (facultyId) {
       const facultyClash = await prisma.masterTimetable.findFirst({
         where: {
           day,
           periodNumber: Number(periodNumber),
           facultyId,
+          academicYear,
           NOT: {
             AND: [
               { branch },
@@ -636,7 +646,34 @@ router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, asy
       if (facultyClash) {
         const facName = facultyClash.faculty ? facultyClash.faculty.name : "Faculty member";
         return res.status(409).json({
-          error: `⚠️ CLASH ALERT: ${facName} is already assigned to ${facultyClash.branch}-${facultyClash.semester} (${facultyClash.section}) in Period ${facultyClash.periodNumber} on ${day}!`,
+          error: `⚠️ FACULTY CLASH: ${facName} is already assigned to ${facultyClash.branch}-${facultyClash.semester} (${facultyClash.section}) in Period ${facultyClash.periodNumber} on ${day} (${academicYear})!`,
+        });
+      }
+    }
+
+    // 2. Conflict check: Ensure room is not occupied by another class in the same day and period
+    if (roomNo && typeof roomNo === "string" && roomNo.trim() !== "") {
+      const trimmedRoom = roomNo.trim();
+      const roomClash = await prisma.masterTimetable.findFirst({
+        where: {
+          day,
+          periodNumber: Number(periodNumber),
+          roomNo: trimmedRoom,
+          academicYear,
+          NOT: {
+            AND: [
+              { branch },
+              { semester: Number(semester) },
+              { section },
+            ],
+          },
+        },
+        include: { course: true },
+      });
+
+      if (roomClash) {
+        return res.status(409).json({
+          error: `⚠️ ROOM CLASH: Room ${trimmedRoom} is already occupied by ${roomClash.branch}-${roomClash.semester} (${roomClash.section}) in Period ${roomClash.periodNumber} on ${day} (${academicYear})!`,
         });
       }
     }
@@ -652,9 +689,10 @@ router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, asy
         },
       },
       update: {
+        academicYear,
         ...(facultyId !== undefined && { facultyId: facultyId || null }),
         ...(courseId !== undefined && { courseId: courseId || null }),
-        ...(roomNo !== undefined && { roomNo: roomNo || null }),
+        ...(roomNo !== undefined && { roomNo: roomNo ? roomNo.trim() : null }),
         ...(isLab !== undefined && { isLab: Boolean(isLab) }),
       },
       create: {
@@ -665,9 +703,10 @@ router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, asy
         periodNumber: Number(periodNumber),
         startTime: "09:00 AM",
         endTime: "10:00 AM",
+        academicYear,
         facultyId: facultyId || null,
         courseId: courseId || null,
-        roomNo: roomNo || null,
+        roomNo: roomNo ? roomNo.trim() : null,
         isLab: Boolean(isLab),
       },
     });

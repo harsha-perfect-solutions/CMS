@@ -19,12 +19,6 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
     return res.status(401).json({ error: "Access denied. Token missing." });
   }
 
-  // Support dev-token and super-admin-auth-token gracefully
-  if (token === "super-admin-auth-token" || token === "dev-token") {
-    req.userId = "super-admin";
-    req.userRole = "super_admin";
-    return next();
-  }
 
   try {
     const verified = jwt.verify(token, JWT_SECRET) as { id: string; role: string };

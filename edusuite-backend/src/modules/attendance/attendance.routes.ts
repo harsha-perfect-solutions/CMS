@@ -36,6 +36,108 @@ export function normalizeDeptCode(deptStr?: string): string {
   return d;
 }
 
+// Helper to return all database variations for a department or branch code (e.g. "ME" <-> "MECHANICAL")
+export function getMatchingDepartments(branchOrDept?: string): string[] {
+  if (!branchOrDept) return [];
+  const raw = branchOrDept.trim();
+  const upper = raw.toUpperCase();
+  if (upper === "ME" || upper === "MECHANICAL" || upper.includes("MECHANICAL")) {
+    return ["ME", "MECHANICAL", "Mechanical Engineering", "Mechanical"];
+  }
+  if (upper === "CSE" || upper === "CS" || upper.includes("COMPUTER")) {
+    return ["CSE", "CS", "Computer Science & Engineering", "Computer Science"];
+  }
+  if (upper === "ECE" || upper === "EC" || upper.includes("ELECTRONICS")) {
+    return ["ECE", "EC", "Electronics & Communication Engineering", "Electronics"];
+  }
+  if (upper === "EEE" || upper === "EE" || upper.includes("ELECTRICAL")) {
+    return ["EEE", "EE", "Electrical & Electronics Engineering", "Electrical"];
+  }
+  if (upper === "CIVIL" || upper === "CE" || upper.includes("CIVIL")) {
+    return ["CIVIL", "CE", "Civil Engineering", "Civil"];
+  }
+  if (upper === "IT" || upper.includes("INFORMATION")) {
+    return ["IT", "Information Technology"];
+  }
+  if (upper.includes("AI&DS") || upper.includes("AIDS") || upper.includes("DATA SCIENCE")) {
+    return ["AI&DS", "AIDS", "Artificial Intelligence & Data Science"];
+  }
+  if (upper.includes("AI&ML") || upper.includes("AIML") || upper.includes("MACHINE LEARNING")) {
+    return ["AI&ML", "AIML", "Artificial Intelligence & Machine Learning"];
+  }
+  return [raw, upper];
+}
+
+// Authoritative helper to resolve authorized student roster for a timetable session
+export async function resolveAuthorizedSessionRoster(timetable: {
+  id: string;
+  branch: string;
+  semester: number;
+  section: string;
+  courseId?: string | null;
+}) {
+  const cleanSec = (timetable.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+
+  // 1. Prefer CourseRegistration if present
+  if (timetable.courseId) {
+    const registrations = await prisma.courseRegistration.findMany({
+      where: {
+        courseId: timetable.courseId,
+        status: "APPROVED",
+        student: {
+          status: { not: "Inactive" },
+        },
+      },
+      include: { student: true },
+      orderBy: { student: { rollNumber: "asc" } },
+    });
+
+    if (registrations.length > 0) {
+      const sectionFiltered = registrations
+        .map((r) => r.student)
+        .filter((s) => {
+          if (!s.section) return true;
+          const sSec = s.section.replace(/^Section\s+/i, "").trim().toUpperCase();
+          return sSec === cleanSec;
+        });
+
+      const pool = sectionFiltered.length > 0 ? sectionFiltered : registrations.map((r) => r.student);
+      return pool.map((s) => ({
+        id: s.id,
+        rollNumber: s.rollNumber,
+        name: s.name,
+        department: s.department,
+        semester: s.semester,
+        section: s.section || cleanSec,
+        avatarUrl: s.avatarUrl,
+      }));
+    }
+  }
+
+  // 2. Safe Fallback: Cohort matching with department normalization (e.g. ME <-> MECHANICAL)
+  const depts = getMatchingDepartments(timetable.branch);
+  const students = await prisma.student.findMany({
+    where: {
+      department: { in: depts, mode: "insensitive" as const },
+      semester: timetable.semester,
+      section: { in: [cleanSec, `Section ${cleanSec}`] },
+      status: { not: "Inactive" },
+    },
+    select: {
+      id: true,
+      rollNumber: true,
+      name: true,
+      department: true,
+      semester: true,
+      section: true,
+      avatarUrl: true,
+    },
+    orderBy: { rollNumber: "asc" },
+  });
+
+  return students;
+}
+
 // Helper to resolve and enforce department RBAC scope
 async function resolveDepartmentScope(
   req: AuthenticatedRequest,
@@ -50,6 +152,13 @@ async function resolveDepartmentScope(
       if (faculty?.department) {
         dept = faculty.department;
       }
+    }
+
+    if (!dept) {
+      res.status(403).json({
+        error: "Access denied. HOD department is not configured. Please contact administration.",
+      });
+      return { isAuthorized: false };
     }
 
     const normDept = normalizeDeptCode(dept);
@@ -68,7 +177,7 @@ async function resolveDepartmentScope(
       return { isAuthorized: false };
     }
 
-    return { department: normDept || dept || undefined, isAuthorized: true };
+    return { department: normDept || dept, isAuthorized: true };
   }
 
   const requestedDept = req.query.department as string;
@@ -260,7 +369,8 @@ router.get("/classes", authenticateToken, async (req: AuthenticatedRequest, res:
 
     const studentMap: Record<string, number> = {};
     for (const sg of studentGrouped) {
-      const key = `${(sg.department || "CSE").toLowerCase()}-${sg.semester}`;
+      if (!sg.department) continue;
+      const key = `${sg.department.toLowerCase()}-${sg.semester}`;
       studentMap[key] = sg._count.id;
     }
 
@@ -418,6 +528,8 @@ router.get("/ledger", authenticateToken, async (req: AuthenticatedRequest, res: 
       where,
       include: {
         user: true,
+        course: true,
+        faculty: true,
         timetable: { include: { course: true, faculty: true } },
       },
       orderBy: { date: "desc" },
@@ -429,15 +541,15 @@ router.get("/ledger", authenticateToken, async (req: AuthenticatedRequest, res: 
       studentId: r.userId,
       rollNo: r.user ? r.user.rollNumber : "N/A",
       studentName: r.user ? r.user.name : "Student",
-      department: r.user ? r.user.department : "CSE",
-      section: r.user?.section || "CSE-A",
-      semester: r.user ? r.user.semester : 3,
+      department: r.user?.department || "Unassigned",
+      section: r.user?.section || "Unassigned",
+      semester: r.user?.semester ?? null,
       date: r.date,
       periodNumber: r.periodNumber || 1,
       status: r.status,
-      courseCode: r.timetable?.course ? r.timetable.course.code : "CS502",
-      courseTitle: r.timetable?.course ? r.timetable.course.name : "Subject Lecture",
-      instructor: r.timetable?.faculty ? r.timetable.faculty.name : "Faculty Member",
+      courseCode: r.course?.code || r.timetable?.course?.code || "N/A",
+      courseTitle: r.course?.name || r.timetable?.course?.name || "Subject Lecture",
+      instructor: r.faculty?.name || r.timetable?.faculty?.name || "Faculty Member",
     }));
 
     return res.json(result);
@@ -456,13 +568,17 @@ router.get("/classes-list", authenticateToken, async (req: AuthenticatedRequest,
     const scope = await resolveDepartmentScope(req, res);
     if (!scope.isAuthorized) return;
 
-    const dept = scope.department || (req.query.department as string) || "CSE";
+    const dept = scope.department || (req.query.department as string);
+    if (!dept || dept === "All" || dept === "All Departments") {
+      return res.status(400).json({ error: "Department parameter is required." });
+    }
+    const depts = getMatchingDepartments(dept);
 
     // Query distinct semesters in Student and MasterTimetable for this department
     const studentSemesters = await prisma.student.groupBy({
       by: ["semester"],
       where: {
-        department: { contains: dept, mode: "insensitive" as const },
+        department: { in: depts, mode: "insensitive" as const },
         semester: { not: null },
       },
     });
@@ -470,7 +586,7 @@ router.get("/classes-list", authenticateToken, async (req: AuthenticatedRequest,
     const ttSemesters = await prisma.masterTimetable.groupBy({
       by: ["semester"],
       where: {
-        branch: { contains: dept, mode: "insensitive" as const },
+        branch: { in: depts, mode: "insensitive" as const },
       },
     });
 
@@ -507,14 +623,18 @@ router.get("/sections-list", authenticateToken, async (req: AuthenticatedRequest
     const scope = await resolveDepartmentScope(req, res);
     if (!scope.isAuthorized) return;
 
-    const dept = scope.department || (req.query.department as string) || "CSE";
+    const dept = scope.department || (req.query.department as string);
+    if (!dept || dept === "All" || dept === "All Departments") {
+      return res.status(400).json({ error: "Department parameter is required." });
+    }
+    const depts = getMatchingDepartments(dept);
     const semParam = req.query.semester || req.query.classId;
     const sem = semParam ? Number(semParam) : undefined;
 
     const studentSections = await prisma.student.groupBy({
       by: ["section"],
       where: {
-        department: { contains: dept, mode: "insensitive" as const },
+        department: { in: depts, mode: "insensitive" as const },
         ...(sem ? { semester: sem } : {}),
         section: { not: "" },
       },
@@ -523,7 +643,7 @@ router.get("/sections-list", authenticateToken, async (req: AuthenticatedRequest
     const ttSections = await prisma.masterTimetable.groupBy({
       by: ["section"],
       where: {
-        branch: { contains: dept, mode: "insensitive" as const },
+        branch: { in: depts, mode: "insensitive" as const },
         ...(sem ? { semester: sem } : {}),
       },
     });
@@ -531,14 +651,14 @@ router.get("/sections-list", authenticateToken, async (req: AuthenticatedRequest
     const secSet = new Set<string>();
     studentSections.forEach((s) => {
       if (s.section) {
-        const clean = s.section.replace(/^(CSE|ECE|ME|CE|EEE|IT)-?/i, "").trim() || s.section;
+        const clean = s.section.replace(/^(section\s*|[A-Za-z&]+-?)/i, "").trim() || s.section;
         secSet.add(clean.toUpperCase());
       }
     });
 
     ttSections.forEach((t) => {
       if (t.section) {
-        const clean = t.section.replace(/^(section\s*|CSE|ECE|ME|CE|EEE|IT)-?/i, "").trim() || t.section;
+        const clean = t.section.replace(/^(section\s*|[A-Za-z&]+-?)/i, "").trim() || t.section;
         secSet.add(clean.toUpperCase());
       }
     });
@@ -560,7 +680,11 @@ router.get("/session-info", authenticateToken, async (req: AuthenticatedRequest,
     const scope = await resolveDepartmentScope(req, res);
     if (!scope.isAuthorized) return;
 
-    const dept = scope.department || (req.query.department as string) || "CSE";
+    const dept = scope.department || (req.query.department as string);
+    if (!dept || dept === "All" || dept === "All Departments") {
+      return res.status(400).json({ error: "Department parameter is required." });
+    }
+    const depts = getMatchingDepartments(dept);
     const semParam = req.query.semester || req.query.classId;
     const sem = semParam ? Number(semParam) : undefined;
     const section = (req.query.section as string || "").trim();
@@ -572,7 +696,7 @@ router.get("/session-info", authenticateToken, async (req: AuthenticatedRequest,
 
     const tt = await prisma.masterTimetable.findFirst({
       where: {
-        branch: { contains: dept, mode: "insensitive" as const },
+        branch: { in: depts, mode: "insensitive" as const },
         ...(sem ? { semester: sem } : {}),
         section: { contains: section, mode: "insensitive" as const },
         periodNumber,
@@ -590,7 +714,7 @@ router.get("/session-info", authenticateToken, async (req: AuthenticatedRequest,
     return res.json({
       hasSubject: true,
       timetableId: tt.id,
-      subjectCode: tt.course?.code || `${dept}${sem}0${periodNumber}`,
+      subjectCode: tt.course?.code || "N/A",
       subjectName: tt.course?.name || "Department Course",
       facultyName: tt.faculty?.name || "Faculty Member",
       room: tt.roomNo || "Room 101",
@@ -612,7 +736,11 @@ router.get("/roster", authenticateToken, async (req: AuthenticatedRequest, res: 
     const section = (req.query.section as string || "").trim();
     const date = (req.query.date as string) || new Date().toISOString().split("T")[0];
     const periodNumber = Number(req.query.periodNumber || 2);
-    const dept = scope.department || (req.query.department as string) || "CSE";
+    const dept = scope.department || (req.query.department as string);
+    if (!dept || dept === "All" || dept === "All Departments") {
+      return res.status(400).json({ error: "Department parameter is required." });
+    }
+    const depts = getMatchingDepartments(dept);
 
     // DO NOT return students if class or section is missing!
     if (!semParam || !section || semParam === "all" || section === "all") {
@@ -626,7 +754,7 @@ router.get("/roster", authenticateToken, async (req: AuthenticatedRequest, res: 
 
     const students = await prisma.student.findMany({
       where: {
-        department: { contains: dept, mode: "insensitive" as const },
+        department: { in: depts, mode: "insensitive" as const },
         ...(isNaN(sem) ? {} : { semester: sem }),
         OR: [
           { section: { contains: sectionPattern, mode: "insensitive" as const } },
@@ -704,6 +832,14 @@ router.get("/roster", authenticateToken, async (req: AuthenticatedRequest, res: 
 // 5. BULK TRANSACTIONAL ATTENDANCE MARKING API
 // ==========================================
 router.post("/mark", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const role = (req.userRole || "").toLowerCase();
+  if (role === "student" || role === "parent") {
+    return res.status(403).json({ error: "Access denied. Students and parents are not permitted to mark or modify attendance." });
+  }
+  if (role !== "faculty" && role !== "hod" && role !== "admin" && role !== "super_admin") {
+    return res.status(403).json({ error: "Access denied. Authorized faculty or administrative privileges required." });
+  }
+
   const { timetableId, date, periodNumber, records } = req.body;
 
   if (!date || !Array.isArray(records) || records.length === 0) {
@@ -713,20 +849,44 @@ router.post("/mark", authenticateToken, async (req: AuthenticatedRequest, res: R
   const period = Number(periodNumber) || 1;
 
   try {
-    // Verify faculty ownership of the timetable session if caller is faculty role
-    if (timetableId && (req.userRole === "faculty" || req.userRole === "staff")) {
-      const assignedTT = await prisma.masterTimetable.findUnique({
+    let assignedTT: any = null;
+    if (timetableId) {
+      assignedTT = await prisma.masterTimetable.findUnique({
         where: { id: timetableId },
       });
-      if (assignedTT && assignedTT.facultyId && assignedTT.facultyId !== req.userId) {
+      if (!assignedTT) {
+        return res.status(404).json({ error: "Timetable session not found." });
+      }
+
+      // Check unassigned session
+      if (!assignedTT.facultyId) {
+        if (role !== "super_admin" && role !== "admin") {
+          return res.status(403).json({
+            error: "Access denied. Unassigned timetable session cannot be marked by faculty without administrative assignment.",
+          });
+        }
+      } else if (assignedTT.facultyId !== req.userId && role !== "super_admin" && role !== "admin") {
         return res.status(403).json({
           error: "Access denied. You are not authorized to mark attendance for a class assigned to another faculty member.",
         });
       }
+
+      // Validate student ownership: all students must belong to the authorized roster
+      const roster = await resolveAuthorizedSessionRoster(assignedTT);
+      const authorizedIds = new Set(roster.map((s) => s.id));
+      for (const r of records) {
+        if (!authorizedIds.has(r.studentId)) {
+          return res.status(400).json({
+            error: `Validation failed: Student ${r.studentId} does not belong to the authorized roster for this class. Transaction rejected.`,
+          });
+        }
+      }
     }
 
+    const markingFacultyId = (role === "faculty" || role === "hod") ? req.userId : (assignedTT?.facultyId || undefined);
+
     const results = await prisma.$transaction(
-      records.map((r: { studentId: string; status: string }) =>
+      records.map((r: { studentId: string; status: string; remarks?: string }) =>
         prisma.attendanceRecord.upsert({
           where: {
             userId_date_periodNumber: {
@@ -738,6 +898,9 @@ router.post("/mark", authenticateToken, async (req: AuthenticatedRequest, res: R
           update: {
             status: r.status,
             ...(timetableId && { timetableId }),
+            ...(assignedTT?.courseId && { courseId: assignedTT.courseId }),
+            ...(markingFacultyId && { facultyId: markingFacultyId }),
+            ...(r.remarks && { remarks: r.remarks }),
           },
           create: {
             userId: r.studentId,
@@ -745,6 +908,9 @@ router.post("/mark", authenticateToken, async (req: AuthenticatedRequest, res: R
             periodNumber: period,
             status: r.status,
             ...(timetableId && { timetableId }),
+            ...(assignedTT?.courseId && { courseId: assignedTT.courseId }),
+            ...(markingFacultyId && { facultyId: markingFacultyId }),
+            ...(r.remarks && { remarks: r.remarks }),
           },
         })
       )
@@ -849,29 +1015,49 @@ router.get("/", authenticateToken, async (req: AuthenticatedRequest, res: Respon
 });
 
 router.post("/", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  const { date, status, periodNumber } = req.body;
+  const role = (req.userRole || "").toLowerCase();
+  if (role === "student" || role === "parent") {
+    return res.status(403).json({ error: "Access denied. Students and parents are not permitted to mark or modify attendance." });
+  }
+  if (role !== "faculty" && role !== "hod" && role !== "admin" && role !== "super_admin") {
+    return res.status(403).json({ error: "Access denied. Authorized faculty or administrative privileges required." });
+  }
+
+  const { date, status, periodNumber, studentId } = req.body;
 
   if (!date || !status) {
     return res.status(400).json({ error: "Please specify both date (YYYY-MM-DD) and status." });
   }
 
+  const targetUserId = studentId || req.userId;
+  if (!targetUserId) {
+    return res.status(400).json({ error: "Target studentId is required." });
+  }
+
+  // Verify target is a student
+  const targetStudent = await prisma.student.findUnique({ where: { id: targetUserId } });
+  if (!targetStudent) {
+    return res.status(404).json({ error: "Student record not found." });
+  }
+
   const period = Number(periodNumber) || 1;
+  const markingFacultyId = (role === "faculty" || role === "hod") ? req.userId : undefined;
 
   try {
-    const userId = req.userId!;
-
     const record = await prisma.attendanceRecord.upsert({
       where: {
-        userId_date_periodNumber: { userId, date, periodNumber: period },
+        userId_date_periodNumber: { userId: targetUserId, date, periodNumber: period },
       },
       update: {
         status,
+        ...(markingFacultyId && { facultyId: markingFacultyId }),
       },
       create: {
-        userId,
+        userId: targetUserId,
         date,
         periodNumber: period,
         status,
+        ...(markingFacultyId && { facultyId: markingFacultyId }),
       },
     });
 
@@ -1040,7 +1226,7 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       },
       targetDate: targetDateStr,
       targetDay,
-      departmentName: faculty.department === "CSE" ? "Computer Science & Engineering" : faculty.department,
+      departmentName: faculty.department || "N/A",
       academicYear: "2026-27",
       semester: classes.length > 0 ? `Sem ${classes[0].semester}` : "Semester 5",
       stats,
@@ -1065,6 +1251,10 @@ router.get("/faculty/session/:timetableId/roster", authenticateToken, async (req
       return res.status(401).json({ error: "Unauthorized." });
     }
 
+    if (authRole === "student" || authRole === "parent") {
+      return res.status(403).json({ error: "Access denied. Students and parents are not authorized to access session rosters." });
+    }
+
     const timetable = await prisma.masterTimetable.findUnique({
       where: { id: timetableId },
       include: { course: true, faculty: true },
@@ -1074,8 +1264,14 @@ router.get("/faculty/session/:timetableId/roster", authenticateToken, async (req
       return res.status(404).json({ error: "Timetable session not found." });
     }
 
-    // Ownership check: session must belong to authenticated faculty (or admin)
-    if (timetable.facultyId && timetable.facultyId !== authUserId && authRole !== "super_admin" && authRole !== "admin") {
+    // Ownership check & Unassigned session check
+    if (!timetable.facultyId) {
+      if (authRole !== "super_admin" && authRole !== "admin") {
+        return res.status(403).json({
+          error: "Access denied. Unassigned timetable session has no assigned faculty.",
+        });
+      }
+    } else if (timetable.facultyId !== authUserId && authRole !== "super_admin" && authRole !== "admin") {
       return res.status(403).json({
         error: "Access denied. You are not authorized to access students or attendance for this session.",
       });
@@ -1083,25 +1279,8 @@ router.get("/faculty/session/:timetableId/roster", authenticateToken, async (req
 
     const cleanSec = (timetable.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
 
-    // Query enrolled students matching (branch, semester, cleanSec)
-    const students = await prisma.student.findMany({
-      where: {
-        department: { equals: timetable.branch, mode: "insensitive" },
-        semester: timetable.semester,
-        section: { in: [cleanSec, `Section ${cleanSec}`] },
-        status: { not: "Inactive" },
-      },
-      select: {
-        id: true,
-        rollNumber: true,
-        name: true,
-        department: true,
-        semester: true,
-        section: true,
-        avatarUrl: true,
-      },
-      orderBy: { rollNumber: "asc" },
-    });
+    // Query enrolled students matching session via authoritative roster resolver
+    const students = await resolveAuthorizedSessionRoster(timetable);
 
     // Query existing marks on that date & period
     const studentIds = students.map((s) => s.id);
@@ -1167,6 +1346,13 @@ router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req:
       return res.status(401).json({ error: "Unauthorized." });
     }
 
+    if (authRole === "student" || authRole === "parent") {
+      return res.status(403).json({ error: "Access denied. Students and parents are not permitted to mark attendance." });
+    }
+    if (authRole !== "faculty" && authRole !== "hod" && authRole !== "admin" && authRole !== "super_admin") {
+      return res.status(403).json({ error: "Access denied. Authorized faculty or administrative privileges required." });
+    }
+
     if (!date || !Array.isArray(records) || records.length === 0) {
       return res.status(400).json({ error: "date (YYYY-MM-DD) and non-empty records array are required." });
     }
@@ -1180,15 +1366,33 @@ router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req:
       return res.status(404).json({ error: "Timetable session not found." });
     }
 
-    // Ownership check: must belong to authenticated faculty
-    if (timetable.facultyId && timetable.facultyId !== authUserId && authRole !== "super_admin" && authRole !== "admin") {
+    // Ownership check & Unassigned session check
+    if (!timetable.facultyId) {
+      if (authRole !== "super_admin" && authRole !== "admin") {
+        return res.status(403).json({
+          error: "Access denied. Unassigned timetable session cannot be marked by faculty. Administrative assignment required.",
+        });
+      }
+    } else if (timetable.facultyId !== authUserId && authRole !== "super_admin" && authRole !== "admin") {
       return res.status(403).json({
         error: "Access denied. You are not authorized to mark attendance for this class.",
       });
     }
 
+    // Student roster validation: verify every student belongs to the authorized roster
+    const roster = await resolveAuthorizedSessionRoster(timetable);
+    const authorizedIds = new Set(roster.map((s) => s.id));
+    for (const r of records) {
+      if (!authorizedIds.has(r.studentId)) {
+        return res.status(400).json({
+          error: `Validation failed: Student with ID ${r.studentId} is not enrolled in this session (${timetable.branch} ${timetable.section} Sem ${timetable.semester}). Entire transaction rolled back.`,
+        });
+      }
+    }
+
     const period = timetable.periodNumber;
     const courseId = timetable.courseId || undefined;
+    const markingFacultyId = (authRole === "faculty" || authRole === "hod") ? authUserId : (timetable.facultyId || undefined);
 
     // Execute atomic transaction
     const results = await prisma.$transaction(
@@ -1205,6 +1409,7 @@ router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req:
             status: r.status,
             timetableId: timetable.id,
             ...(courseId && { courseId }),
+            ...(markingFacultyId && { facultyId: markingFacultyId }),
             ...(r.remarks && { remarks: r.remarks }),
           },
           create: {
@@ -1214,6 +1419,7 @@ router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req:
             status: r.status,
             timetableId: timetable.id,
             ...(courseId && { courseId }),
+            ...(markingFacultyId && { facultyId: markingFacultyId }),
             ...(r.remarks && { remarks: r.remarks }),
           },
         })
@@ -1569,7 +1775,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       name: student.name,
       avatarUrl: student.avatarUrl || "",
       program: "B.Tech",
-      branch: student.department || "CSE",
+      branch: student.department || "N/A",
       section: student.section || "A",
       academicYear: "3rd Year" as const,
       semester: student.semester || 5,

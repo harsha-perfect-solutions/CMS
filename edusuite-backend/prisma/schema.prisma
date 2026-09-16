@@ -70,6 +70,7 @@ model Faculty {
   lessonPlans         LessonPlan[]
   leaveRequests       FacultyLeave[]
   leaveBalances       FacultyLeaveBalance[]
+  attendanceRecords   AttendanceRecord[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 }
@@ -105,6 +106,7 @@ model Course {
   subjectAllocations  SubjectAllocation[]
   lmsResources        LmsResource[]
   lessonPlans         LessonPlan[]
+  attendanceRecords   AttendanceRecord[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 }
@@ -171,6 +173,9 @@ model AttendanceRecord {
   timetableId  String?
   timetable    MasterTimetable? @relation(fields: [timetableId], references: [id], onDelete: SetNull)
   courseId     String?
+  course       Course?          @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  facultyId    String?
+  faculty      Faculty?         @relation(fields: [facultyId], references: [id], onDelete: SetNull)
   remarks      String?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
@@ -179,6 +184,8 @@ model AttendanceRecord {
   @@index([userId])
   @@index([date])
   @@index([timetableId])
+  @@index([facultyId])
+  @@index([courseId])
 }
 
 model Notification {
@@ -279,6 +286,8 @@ model MasterTimetable {
   startTime    String   // e.g. "09:00 AM"
   endTime      String   // e.g. "10:00 AM"
 
+  academicYear String   @default("2026-27")
+
   courseId     String?
   course       Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
 
@@ -298,6 +307,8 @@ model MasterTimetable {
   @@index([facultyId])
   @@index([courseId])
   @@index([day, periodNumber])
+  @@index([academicYear])
+  @@index([roomNo, day, periodNumber])
 }
 
 model SalaryStructure {

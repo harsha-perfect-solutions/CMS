@@ -22,12 +22,6 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
     return res.status(401).json({ error: "Access denied. Token missing." });
   }
 
-  if (token === "super-admin-auth-token" || token.includes("super-admin")) {
-    req.userId = "super-admin-id";
-    req.userRole = "super_admin";
-    req.userDepartment = undefined;
-    return next();
-  }
 
   try {
     const verified = jwt.verify(token, JWT_SECRET) as { id: string; email?: string; role: string; department?: string };
@@ -399,18 +393,19 @@ router.post("/change-password", async (req: Request, res: Response) => {
   try {
     const authHeader = req.headers["authorization"];
     const token = authHeader && authHeader.split(" ")[1];
-    let userId = "";
-    let userRole = "super_admin";
+    if (!token) {
+      return res.status(401).json({ error: "Access denied. Authentication token required." });
+    }
 
-    if (token && token !== "super-admin-auth-token") {
-      try {
-        const verified = jwt.verify(token, JWT_SECRET) as { id: string; role: string };
-        userId = verified.id;
-        userRole = verified.role;
-      } catch (e) {}
-    } else {
-      userId = "sa-admin-id";
-      userRole = "super_admin";
+    let userId = "";
+    let userRole = "";
+
+    try {
+      const verified = jwt.verify(token, JWT_SECRET) as { id: string; role: string };
+      userId = verified.id;
+      userRole = verified.role;
+    } catch (e) {
+      return res.status(401).json({ error: "Invalid or expired session token." });
     }
 
     const newHash = await bcrypt.hash(newPassword, 10);
@@ -432,7 +427,7 @@ router.post("/change-password", async (req: Request, res: Response) => {
         userFound = true;
         if (dbUser.password && (dbUser.password.startsWith("$2a$") || dbUser.password.startsWith("$2b$"))) {
           const isValid = await bcrypt.compare(oldPass, dbUser.password);
-          if (!isValid && oldPass !== "password123" && oldPass !== "demo1234") {
+          if (!isValid) {
             return res.status(400).json({ error: "Incorrect current password. Please verify and try again." });
           }
         }
