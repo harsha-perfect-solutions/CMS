@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { prisma } from "../../db";
 import { authenticateToken, AuthenticatedRequest } from "../auth/auth.routes";
 import { requireSuperAdmin, auditLog } from "../super-admin/super-admin.routes";
+import { getMatchingDepartments, normalizeBranchCode, formatSectionDisplay } from "../../lib/department-utils";
 
 const router = Router();
 
@@ -691,6 +692,10 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
       return res.status(401).json({ error: "Unauthorized. Authentication session required." });
     }
 
+    if (authRole === "student" || authRole === "parent" || authRole === "alumni") {
+      return res.status(403).json({ error: "Access denied. Faculty role required to access faculty timetable." });
+    }
+
     // Security check: Block cross-faculty timetable snooping if facultyId query param passed by client
     const requestedFacultyId = req.query.facultyId as string;
     if (requestedFacultyId && authRole === "faculty" && requestedFacultyId !== authUserId) {
@@ -764,9 +769,14 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
       });
     }
 
+    const academicYear = (req.query.academicYear as string) || "2026-27";
+
     // 2. Query all MasterTimetable records assigned to this authenticated faculty in PostgreSQL
     const allFacultyRecords = await prisma.masterTimetable.findMany({
-      where: { facultyId: faculty.id },
+      where: {
+        facultyId: faculty.id,
+        ...(academicYear ? { academicYear } : {}),
+      },
       include: { course: true, faculty: true },
       orderBy: [{ day: "asc" }, { periodNumber: "asc" }],
     });
@@ -844,7 +854,7 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
         status = "Upcoming";
       }
 
-      const cleanSec = r.section.replace(/section\s*/i, "").trim() || "A";
+      const cleanSec = formatSectionDisplay(r.section).clean;
 
       return {
         id: r.id,
@@ -875,7 +885,7 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
       const endMins = parseTimeToMinutes(r.endTime);
       const isCurrentDay = r.day.toLowerCase() === todayName.toLowerCase();
       const isOngoing = isCurrentDay && currentMins >= startMins && currentMins < endMins;
-      const cleanSec = r.section.replace(/section\s*/i, "").trim() || "A";
+      const cleanSec = formatSectionDisplay(r.section).clean;
 
       return {
         day: r.day as "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday",
@@ -913,13 +923,14 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
     // 8. Room Allocations
     const roomMap = new Map<string, any>();
     for (const r of records) {
-      const roomKey = `${r.roomNo}-${r.course?.code}`;
+      if (!r.roomNo) continue;
+      const roomKey = `${r.roomNo}-${r.course?.code || "general"}`;
       if (!roomMap.has(roomKey)) {
         roomMap.set(roomKey, {
           subject: r.course ? r.course.name : "Assigned Course",
           code: r.course ? r.course.code : "",
-          room: r.roomNo || "Room 101",
-          building: r.roomNo?.includes("Block") ? r.roomNo.split("-")[0].trim() : "Main Academic Block",
+          room: r.roomNo,
+          building: r.roomNo.includes("Block") ? r.roomNo.split("-")[0].trim() : "Main Academic Block",
           type: r.isLab ? "Lab" : "Theory",
           capacity: r.isLab ? 40 : 60,
         });
@@ -932,7 +943,7 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
     for (const r of records) {
       if (!r.course) continue;
       const cId = r.course.id;
-      const cleanSec = r.section.replace(/section\s*/i, "").trim() || "A";
+      const cleanSec = formatSectionDisplay(r.section).clean;
       const secTag = `${r.branch}-${r.semester}${cleanSec}`;
 
       if (!subjectMap.has(cId)) {
@@ -977,6 +988,8 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
         ? "Associate Professor"
         : "Assistant Professor";
 
+    const resolvedAy = records.length > 0 ? (records[0].academicYear || academicYear) : academicYear;
+
     return res.json({
       faculty: {
         id: faculty.id,
@@ -987,7 +1000,7 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
         email: faculty.email,
         role: faculty.role,
       },
-      academicYear: "2026-27",
+      academicYear: resolvedAy,
       activeSemester,
       availableSemesters: availableSemesters.length > 0 ? availableSemesters : [5],
       academicWeek: (req.query.week as string) || "Week 5 (Active)",

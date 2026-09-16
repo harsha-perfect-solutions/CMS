@@ -54,95 +54,55 @@ export const DAYS: TimetablePeriod["day"][] = [
 ];
 
 export const PERIOD_SLOTS = [
-  { periodNumber: 1, startTime: "09:00 AM", endTime: "10:00 AM" },
-  { periodNumber: 2, startTime: "10:00 AM", endTime: "11:00 AM" },
-  { periodNumber: 3, startTime: "11:10 AM", endTime: "12:10 PM" },
-  { periodNumber: 4, startTime: "12:10 PM", endTime: "01:10 PM" },
-  { periodNumber: 5, startTime: "02:00 PM", endTime: "03:00 PM" },
-  { periodNumber: 6, startTime: "03:00 PM", endTime: "04:00 PM" },
-  { periodNumber: 7, startTime: "04:00 PM", endTime: "05:00 PM" },
+  { periodNumber: 1, startTime: "08:45 AM", endTime: "09:45 AM" },
+  { periodNumber: 2, startTime: "09:45 AM", endTime: "10:45 AM" },
+  { periodNumber: 3, startTime: "10:45 AM", endTime: "11:45 AM" },
+  { periodNumber: 4, startTime: "11:45 AM", endTime: "12:45 PM" },
+  { periodNumber: 5, startTime: "01:30 PM", endTime: "02:30 PM" },
+  { periodNumber: 6, startTime: "02:30 PM", endTime: "03:30 PM" },
+  { periodNumber: 7, startTime: "03:30 PM", endTime: "04:30 PM" },
 ];
-
-export const MOCK_SUBJECTS_BY_BRANCH_SEM: Record<string, { code: string; name: string; faculty: string; facultyId: string; room: string; isLab: boolean }[]> = {
-  "CSE-5": [
-    { code: "CS501", name: "Machine Learning & Neural Nets", faculty: "Dr. K. Sai Teja", facultyId: "FAC-106", room: "Block B - 302", isLab: false },
-    { code: "CS502", name: "Compiler Design & Lexical Parsing", faculty: "Dr. Rajesh K. Varma", facultyId: "FAC-101", room: "Block B - 302", isLab: false },
-    { code: "CS503", name: "Database Systems & SQL Optimization", faculty: "Ms. Ananya Sharma", facultyId: "FAC-105", room: "Block B - 302", isLab: false },
-    { code: "CS504L", name: "Machine Learning Laboratory", faculty: "Dr. K. Sai Teja", facultyId: "FAC-106", room: "Lab - AI Center", isLab: true },
-    { code: "CS505L", name: "Compiler Design Lab", faculty: "Dr. Rajesh K. Varma", facultyId: "FAC-101", room: "Lab - CSE 2", isLab: true },
-    { code: "CS506", name: "Web Technologies & Microservices", faculty: "Prof. Arvind Swaminathan", facultyId: "FAC-103", room: "Block B - 302", isLab: false },
-  ],
-  "ECE-5": [
-    { code: "EC501", name: "VLSI System Design & Cadence", faculty: "Dr. Meera Nambiar", facultyId: "FAC-102", room: "Block C - 201", isLab: false },
-    { code: "EC502", name: "Digital Signal Processing", faculty: "Dr. K. Sai Teja", facultyId: "FAC-106", room: "Block C - 201", isLab: false },
-    { code: "EC503L", name: "VLSI CAD Laboratory", faculty: "Dr. Meera Nambiar", facultyId: "FAC-102", room: "Lab - ECE 1", isLab: true },
-    { code: "EC504", name: "Microcontrollers & Embedded C", faculty: "Prof. V. K. Murthy", facultyId: "FAC-107", room: "Block C - 201", isLab: false },
-  ],
-  "ME-5": [
-    { code: "ME501", name: "Thermal Engineering & Fluid Dynamics", faculty: "Dr. Sankar Narayan", facultyId: "FAC-104", room: "Engg Block - 105", isLab: false },
-    { code: "ME502L", name: "CAD/CAM Mechanical Simulation Lab", faculty: "Dr. Sankar Narayan", facultyId: "FAC-104", room: "Lab - ME CAD", isLab: true },
-  ],
-  "AI&DS-5": [
-    { code: "AD501", name: "Deep Learning & Computer Vision", faculty: "Prof. Arvind Swaminathan", facultyId: "FAC-103", room: "Block A - 105", isLab: false },
-    { code: "AD502L", name: "Computer Vision & PyTorch Lab", faculty: "Prof. Arvind Swaminathan", facultyId: "FAC-103", room: "Lab - AI Center", isLab: true },
-  ],
-};
-
-export function generateInitialSchedule(branch: string = "CSE", semester: number = 5, section: string = "Section A"): TimetablePeriod[] {
-  const periods: TimetablePeriod[] = [];
-  
-  const key = `${branch}-${semester}`;
-  const subjects = MOCK_SUBJECTS_BY_BRANCH_SEM[key] || [
-    { code: `${branch.slice(0, 3)}${semester}01`, name: `${branch} Core Systems I`, faculty: "Dr. K. Sai Teja", facultyId: "FAC-106", room: "Block B - 302", isLab: false },
-    { code: `${branch.slice(0, 3)}${semester}02`, name: `${branch} Data Architecture`, faculty: "Ms. Ananya Sharma", facultyId: "FAC-105", room: "Block B - 302", isLab: false },
-    { code: `${branch.slice(0, 3)}${semester}03`, name: `${branch} Advanced Laboratory`, faculty: "Dr. Rajesh K. Varma", facultyId: "FAC-101", room: "Lab - AI Center", isLab: true },
-    { code: `${branch.slice(0, 3)}${semester}04`, name: `${branch} Web & Cloud Services`, faculty: "Prof. Arvind Swaminathan", facultyId: "FAC-103", room: "Block B - 305", isLab: false },
-    { code: `${branch.slice(0, 3)}${semester}05`, name: `${branch} Elective & Analytics`, faculty: "Dr. Meera Nambiar", facultyId: "FAC-102", room: "Block B - 302", isLab: false },
-  ];
-
-  DAYS.forEach((day, dayIdx) => {
-    PERIOD_SLOTS.forEach((slot, slotIdx) => {
-      const subj = subjects[(dayIdx + slotIdx) % subjects.length];
-      periods.push({
-        id: `TT-${branch}-${semester}-${section}-${dayIdx + 1}-${slot.periodNumber}`,
-        day,
-        periodNumber: slot.periodNumber,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        subjectCode: subj.code,
-        subjectName: subj.name,
-        facultyId: subj.facultyId,
-        facultyName: subj.faculty,
-        roomNo: subj.room,
-        isLab: subj.isLab,
-        branch,
-        semester,
-        section,
-      });
-    });
-  });
-
-  return periods;
-}
 
 export function checkScheduleConflict(
   schedule: TimetablePeriod[],
   newPeriod: Partial<TimetablePeriod>
 ): ConflictCheckResult {
   // Check if faculty is already teaching elsewhere in the same day and period
-  const clash = schedule.find(
-    (p) =>
-      p.id !== newPeriod.id &&
-      p.day === newPeriod.day &&
-      p.periodNumber === newPeriod.periodNumber &&
-      p.facultyName.toLowerCase() === (newPeriod.facultyName || "").toLowerCase()
-  );
+  if (newPeriod.facultyName && newPeriod.facultyName !== "Faculty Not Assigned") {
+    const clash = schedule.find(
+      (p) =>
+        p.id !== newPeriod.id &&
+        p.day === newPeriod.day &&
+        p.periodNumber === newPeriod.periodNumber &&
+        p.facultyName &&
+        p.facultyName.toLowerCase() === newPeriod.facultyName?.toLowerCase()
+    );
 
-  if (clash) {
-    return {
-      hasConflict: true,
-      conflictReason: `⚠️ CLASH ALERT: ${newPeriod.facultyName} is already assigned to ${clash.branch}-${clash.semester} (${clash.subjectName}) in Period ${clash.periodNumber} on ${clash.day}!`,
-    };
+    if (clash) {
+      return {
+        hasConflict: true,
+        conflictReason: `⚠️ CLASH ALERT: ${newPeriod.facultyName} is already assigned to Period ${clash.periodNumber} on ${clash.day} (${clash.subjectName || clash.subjectCode})!`,
+      };
+    }
+  }
+
+  // Check if room is already occupied in the same day and period
+  if (newPeriod.roomNo && newPeriod.roomNo.trim() !== "") {
+    const roomClash = schedule.find(
+      (p) =>
+        p.id !== newPeriod.id &&
+        p.day === newPeriod.day &&
+        p.periodNumber === newPeriod.periodNumber &&
+        p.roomNo &&
+        p.roomNo.trim().toLowerCase() === newPeriod.roomNo?.trim().toLowerCase()
+    );
+
+    if (roomClash) {
+      return {
+        hasConflict: true,
+        conflictReason: `⚠️ ROOM CLASH: Room ${newPeriod.roomNo} is already occupied by ${roomClash.subjectName || roomClash.subjectCode} in Period ${roomClash.periodNumber} on ${roomClash.day}!`,
+      };
+    }
   }
 
   return { hasConflict: false };
@@ -151,19 +111,32 @@ export function checkScheduleConflict(
 export async function fetchTimetableGrid(
   branch: string = "CSE",
   semester: number = 5,
-  section: string = "Section A"
+  section: string = "Section A",
+  academicYear: string = "2026-27"
 ): Promise<TimetableGrid> {
   try {
-    const res = await api.get(`/api/academics/timetable?branch=${encodeURIComponent(branch)}&semester=${semester}&section=${encodeURIComponent(section)}`);
-    if (res && res.data && Array.isArray(res.data.schedule) && res.data.schedule.length > 0) return res.data;
-  } catch {}
+    const res = await api.get("/api/academics/timetable", {
+      params: { branch, semester, section, academicYear },
+    });
+    if (res && res.data) {
+      return {
+        branch: res.data.branch || branch,
+        semester: res.data.semester || semester,
+        section: res.data.section || section,
+        academicYear: res.data.academicYear || academicYear,
+        schedule: Array.isArray(res.data.schedule) ? res.data.schedule : [],
+      };
+    }
+  } catch (err) {
+    console.error("Failed to fetch timetable grid from PostgreSQL:", err);
+  }
 
   return {
     branch,
     semester,
     section,
-    academicYear: "2026-2027",
-    schedule: generateInitialSchedule(branch, semester, section),
+    academicYear,
+    schedule: [],
   };
 }
 
@@ -172,25 +145,16 @@ export async function autoGenerateTimetable(
   semester: number,
   section: string
 ): Promise<TimetableGrid> {
-  try {
-    const res = await api.post("/api/academics/timetable/generate", { branch, semester, section });
-    if (res && res.data && Array.isArray(res.data.schedule) && res.data.schedule.length > 0) return res.data;
-  } catch {}
-
-  return {
-    branch,
-    semester,
-    section,
-    academicYear: "2026-2027",
-    schedule: generateInitialSchedule(branch, semester, section),
-  };
+  const res = await api.post("/api/academics/timetable/generate", { branch, semester, section });
+  if (res && res.data && Array.isArray(res.data.schedule)) {
+    return res.data;
+  }
+  return fetchTimetableGrid(branch, semester, section);
 }
 
 export async function updateTimetablePeriod(
   periodData: Partial<TimetablePeriod>
-): Promise<boolean> {
-  try {
-    await api.put("/api/academics/timetable/update-period", periodData);
-  } catch {}
-  return true;
+): Promise<any> {
+  const res = await api.put("/api/academics/timetable/update-period", periodData);
+  return res.data;
 }

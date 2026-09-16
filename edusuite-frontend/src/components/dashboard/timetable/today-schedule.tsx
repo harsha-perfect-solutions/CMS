@@ -103,12 +103,22 @@ export function TodaySchedule({ schedule, onMarkAttendance }: TodayScheduleProps
                 <div className="pt-2 border-t border-border/40 flex items-center gap-2">
                   <Button
                     asChild
-                    variant="outline"
+                    variant={isOngoing ? "default" : "outline"}
                     size="sm"
-                    className="h-7 px-2.5 rounded-lg text-[0.65rem] font-bold cursor-pointer flex-1"
+                    className={`h-7 px-2.5 rounded-lg text-[0.65rem] font-bold cursor-pointer flex-1 ${
+                      isOngoing ? "bg-amber-600 hover:bg-amber-700 text-white shadow-sm" : ""
+                    }`}
                   >
-                    <Link to="/faculty/attendance" search={{ semester: slot.semester, section: slot.rawSection, period: slot.periodNumber }}>
-                      Mark Attendance
+                    <Link
+                      to="/faculty/attendance"
+                      search={{
+                        timetableId: slot.timetableId || slot.id,
+                        semester: slot.semester,
+                        section: slot.rawSection,
+                        period: slot.periodNumber,
+                      }}
+                    >
+                      {isOngoing ? "Take Attendance" : "Mark Attendance"}
                     </Link>
                   </Button>
                   <Button

@@ -156,21 +156,22 @@ export function TimetableModuleView({
     e.preventDefault();
     if (!editingPeriod || !gridData) return;
 
-    if (clashWarning) {
-      toast.warning("Conflict Warning: " + clashWarning);
+    try {
+      await updateTimetablePeriod(editingPeriod);
+      setGridData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          schedule: prev.schedule.map((s) => (s.id === editingPeriod.id ? ({ ...s, ...editingPeriod } as TimetablePeriod) : s)),
+        };
+      });
+
+      setIsEditModalOpen(false);
+      toast.success(`Updated period schedule for ${editingPeriod.day} Period ${editingPeriod.periodNumber}!`);
+    } catch (err: any) {
+      const errMsg = err.response?.data?.error || err.message || "Failed to update period schedule.";
+      toast.error("Timetable Conflict Alert", { description: errMsg });
     }
-
-    await updateTimetablePeriod(editingPeriod);
-    setGridData((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        schedule: prev.schedule.map((s) => (s.id === editingPeriod.id ? ({ ...s, ...editingPeriod } as TimetablePeriod) : s)),
-      };
-    });
-
-    setIsEditModalOpen(false);
-    toast.success(`Updated period schedule for ${editingPeriod.day} Period ${editingPeriod.periodNumber}!`);
   };
 
   // Export CSV / Excel
@@ -368,29 +369,29 @@ export function TimetableModuleView({
                   {/* Row 2: Start Time */}
                   <tr className="bg-slate-50/80 dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 text-xs border-b border-slate-200 dark:border-slate-800">
                     <td className="py-2.5 px-4 font-bold text-[#0B192C] dark:text-white border-r border-slate-200 dark:border-slate-800 text-left pl-5">Start Time</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">09:00 AM</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">10:00 AM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">08:45 AM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">09:45 AM</td>
                     <td className="py-2.5 px-2 border-r border-slate-200 dark:border-slate-800 text-slate-400 font-mono">—</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">11:10 AM</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">12:10 PM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">10:45 AM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">11:45 AM</td>
                     <td className="py-2.5 px-2 border-r border-slate-200 dark:border-slate-800 text-slate-400 font-mono">—</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">02:00 PM</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">03:00 PM</td>
-                    <td className="py-2.5 px-3 font-medium">04:00 PM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">01:30 PM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">02:30 PM</td>
+                    <td className="py-2.5 px-3 font-medium">03:30 PM</td>
                   </tr>
 
                   {/* Row 3: End Time */}
                   <tr className="bg-slate-50/40 dark:bg-slate-900/30 text-slate-700 dark:text-slate-300 text-xs border-b border-slate-200 dark:border-slate-800">
                     <td className="py-2.5 px-4 font-bold text-[#0B192C] dark:text-white border-r border-slate-200 dark:border-slate-800 text-left pl-5">End Time</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">10:00 AM</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">11:00 AM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">09:45 AM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">10:45 AM</td>
                     <td className="py-2.5 px-2 border-r border-slate-200 dark:border-slate-800 text-slate-400 font-mono">—</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">12:10 PM</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">01:10 PM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">11:45 AM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">12:45 PM</td>
                     <td className="py-2.5 px-2 border-r border-slate-200 dark:border-slate-800 text-slate-400 font-mono">—</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">03:00 PM</td>
-                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">04:00 PM</td>
-                    <td className="py-2.5 px-3 font-medium">05:00 PM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">02:30 PM</td>
+                    <td className="py-2.5 px-3 border-r border-slate-200 dark:border-slate-800 font-medium">03:30 PM</td>
+                    <td className="py-2.5 px-3 font-medium">04:30 PM</td>
                   </tr>
                 </thead>
 

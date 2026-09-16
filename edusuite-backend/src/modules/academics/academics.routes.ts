@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { prisma } from "../../db";
 import { authenticateToken, AuthenticatedRequest } from "../auth/auth.routes";
 import { requireSuperAdmin, auditLog } from "../super-admin/super-admin.routes";
+import { getMatchingDepartments, normalizeBranchCode, formatSectionDisplay } from "../../lib/department-utils";
 
 const router = Router();
 
@@ -564,19 +565,86 @@ router.post("/curriculum", authenticateToken, requireSuperAdmin, async (req: Aut
 // 5. MASTER TIMETABLE APIS (POSTGRESQL SINGLE SOURCE OF TRUTH)
 // ==========================================
 
-// GET /api/academics/timetable: Fetch authoritative timetable for branch, semester, section
+// GET /api/academics/timetable: Fetch authoritative timetable with server-side RBAC
 router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  const branch = (req.query.branch as string || "CSE").toUpperCase().trim();
-  const semester = parseInt(req.query.semester as string || "5", 10);
-  const section = (req.query.section as string || "Section A").trim();
-  const academicYear = (req.query.academicYear as string) || "2026-27";
-
   try {
+    const userRole = (req.userRole || "").toLowerCase();
+    const authUserId = req.userId;
+
+    let targetBranch: string;
+    let targetSemester: number;
+    let targetSection: string;
+
+    // 1. Role-based scoping
+    if (userRole === "student") {
+      // Identity derived strictly from authenticated Student record in PostgreSQL
+      const student = await prisma.student.findUnique({
+        where: { id: authUserId },
+        select: { department: true, semester: true, section: true },
+      });
+      if (!student) {
+        return res.status(404).json({ error: "Student profile not found." });
+      }
+      targetBranch = normalizeBranchCode(student.department || undefined);
+      targetSemester = student.semester || 1;
+      targetSection = formatSectionDisplay(student.section || undefined).full;
+    } else if (userRole === "hod") {
+      let hodDept = req.userDepartment;
+      if (!hodDept && authUserId) {
+        const fac = await prisma.faculty.findUnique({
+          where: { id: authUserId },
+          select: { department: true },
+        });
+        hodDept = fac?.department || "";
+      }
+      if (!hodDept) {
+        return res.status(403).json({ error: "Access denied. No department associated with HOD account." });
+      }
+
+      const allowedDepts = getMatchingDepartments(hodDept).map((d) => d.toUpperCase());
+      const requestedBranch = (req.query.branch as string || "").trim().toUpperCase();
+
+      if (requestedBranch && !allowedDepts.includes(requestedBranch)) {
+        return res.status(403).json({
+          error: `Access denied. HOD is only authorized to view ${hodDept} department timetable.`,
+        });
+      }
+      targetBranch = normalizeBranchCode(hodDept);
+      targetSemester = parseInt(req.query.semester as string || "5", 10);
+      targetSection = formatSectionDisplay(req.query.section as string || "Section A").full;
+    } else if (userRole === "faculty") {
+      let facDept = req.userDepartment;
+      if (!facDept && authUserId) {
+        const fac = await prisma.faculty.findUnique({
+          where: { id: authUserId },
+          select: { department: true },
+        });
+        facDept = fac?.department || "";
+      }
+      const allowedDepts = getMatchingDepartments(facDept).map((d) => d.toUpperCase());
+      const requestedBranch = (req.query.branch as string || "").trim().toUpperCase();
+      if (requestedBranch && !allowedDepts.includes(requestedBranch) && facDept) {
+        return res.status(403).json({
+          error: "Access denied. Faculty cannot view another department's timetable.",
+        });
+      }
+      targetBranch = requestedBranch ? normalizeBranchCode(requestedBranch) : normalizeBranchCode(facDept || "CSE");
+      targetSemester = parseInt(req.query.semester as string || "5", 10);
+      targetSection = formatSectionDisplay(req.query.section as string || "Section A").full;
+    } else {
+      // Super Admin / Admin
+      targetBranch = normalizeBranchCode(req.query.branch as string || "CSE");
+      targetSemester = parseInt(req.query.semester as string || "5", 10);
+      targetSection = formatSectionDisplay(req.query.section as string || "Section A").full;
+    }
+
+    const academicYear = (req.query.academicYear as string) || "2026-27";
+
     const records = await prisma.masterTimetable.findMany({
       where: {
-        branch,
-        semester,
-        section,
+        branch: targetBranch,
+        semester: targetSemester,
+        section: targetSection,
         ...(academicYear ? { academicYear } : {}),
       },
       include: { faculty: true, course: true },
@@ -591,9 +659,9 @@ router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, re
       endTime: r.endTime,
       subjectCode: r.course ? r.course.code : "",
       subjectName: r.course ? r.course.name : "Assigned Lecture",
-      facultyId: r.facultyId || "",
-      facultyName: r.faculty ? r.faculty.name : "Faculty Member",
-      roomNo: r.roomNo || "LH-101",
+      facultyId: r.facultyId || null,
+      facultyName: r.faculty ? r.faculty.name : (r.facultyId ? "Faculty Member" : "Faculty Not Assigned"),
+      roomNo: r.roomNo || "Room 101",
       isLab: r.isLab,
       branch: r.branch,
       semester: r.semester,
@@ -602,9 +670,9 @@ router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, re
     }));
 
     return res.json({
-      branch,
-      semester,
-      section,
+      branch: targetBranch,
+      semester: targetSemester,
+      section: targetSection,
       academicYear: records.length > 0 ? (records[0].academicYear || academicYear) : academicYear,
       schedule,
     });
@@ -614,17 +682,86 @@ router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, re
 });
 
 // PUT /api/academics/timetable/update-period: Update single period assignment with conflict validation
-router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, async (req: AuthenticatedRequest, res: Response) => {
-  const { branch, semester, section, day, periodNumber, facultyId, courseId, roomNo, isLab, academicYear: reqAcademicYear } = req.body;
+router.put("/timetable/update-period", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const userRole = (req.userRole || "").toLowerCase();
+  const authUserId = req.userId;
+  const isSuperAdmin =
+    userRole === "super_admin" ||
+    userRole === "superadmin" ||
+    userRole === "admin" ||
+    userRole === "principal" ||
+    userRole === "academic_dean";
+  const isHod = userRole === "hod";
 
-  if (!branch || !semester || !section || !day || !periodNumber) {
+  if (!isSuperAdmin && !isHod) {
+    return res.status(403).json({ error: "Access denied. You do not have permission to modify timetable records." });
+  }
+
+  const { id } = req.body;
+  let existingRecord: any = null;
+  if (id) {
+    existingRecord = await prisma.masterTimetable.findUnique({
+      where: { id },
+    });
+    if (!existingRecord) {
+      return res.status(404).json({ error: "Timetable period record not found." });
+    }
+  }
+
+  const rawBranch = req.body.branch || existingRecord?.branch;
+  const rawSem = req.body.semester !== undefined ? req.body.semester : existingRecord?.semester;
+  const rawSec = req.body.section || existingRecord?.section;
+  const day = req.body.day || existingRecord?.day;
+  const periodNumber = req.body.periodNumber !== undefined ? req.body.periodNumber : existingRecord?.periodNumber;
+  const facultyId = req.body.facultyId !== undefined ? req.body.facultyId : existingRecord?.facultyId;
+  const courseId = req.body.courseId !== undefined ? req.body.courseId : existingRecord?.courseId;
+  const roomNo = req.body.roomNo !== undefined ? req.body.roomNo : existingRecord?.roomNo;
+  const isLab = req.body.isLab !== undefined ? req.body.isLab : existingRecord?.isLab;
+  const reqAcademicYear = req.body.academicYear || existingRecord?.academicYear;
+
+  if (!rawBranch || rawSem === undefined || !rawSec || !day || periodNumber === undefined) {
     return res.status(400).json({ error: "branch, semester, section, day, and periodNumber are required." });
   }
 
+  const branch = normalizeBranchCode(rawBranch);
+  const semester = Number(rawSem);
+  const section = formatSectionDisplay(rawSec).full;
   const academicYear = reqAcademicYear || "2026-27";
 
+  // HOD scope check: can only modify timetable for their own department
+  if (isHod) {
+    let hodDept = req.userDepartment;
+    if (!hodDept && authUserId) {
+      const fac = await prisma.faculty.findUnique({ where: { id: authUserId }, select: { department: true } });
+      hodDept = fac?.department || "";
+    }
+    const allowedDepts = getMatchingDepartments(hodDept).map((d) => d.toUpperCase());
+    if (!allowedDepts.includes(branch.toUpperCase())) {
+      return res.status(403).json({ error: `Access denied. HOD is only authorized to modify timetable for ${hodDept} department.` });
+    }
+  }
+
   try {
-    // 1. Conflict check: Ensure faculty is not teaching another class in the same day and period
+    // 1. Section clash check: Ensure no other class exists for the same branch, semester, section, day, period
+    const sectionClash = await prisma.masterTimetable.findFirst({
+      where: {
+        branch,
+        semester,
+        section,
+        day,
+        periodNumber: Number(periodNumber),
+        academicYear,
+        ...(existingRecord ? { id: { not: existingRecord.id } } : {}),
+      },
+    });
+
+    if (sectionClash) {
+      return res.status(409).json({
+        error: `⚠️ SECTION CLASH: Section ${branch}-${semester} (${section}) already has a class scheduled at Period ${periodNumber} on ${day}!`,
+      });
+    }
+
+    // 2. Conflict check: Ensure faculty is not teaching another class in the same day and period
     if (facultyId) {
       const facultyClash = await prisma.masterTimetable.findFirst({
         where: {
@@ -632,13 +769,7 @@ router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, asy
           periodNumber: Number(periodNumber),
           facultyId,
           academicYear,
-          NOT: {
-            AND: [
-              { branch },
-              { semester: Number(semester) },
-              { section },
-            ],
-          },
+          ...(existingRecord ? { id: { not: existingRecord.id } } : {}),
         },
         include: { faculty: true, course: true },
       });
@@ -646,12 +777,12 @@ router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, asy
       if (facultyClash) {
         const facName = facultyClash.faculty ? facultyClash.faculty.name : "Faculty member";
         return res.status(409).json({
-          error: `⚠️ FACULTY CLASH: ${facName} is already assigned to ${facultyClash.branch}-${facultyClash.semester} (${facultyClash.section}) in Period ${facultyClash.periodNumber} on ${day} (${academicYear})!`,
+          error: `⚠️ FACULTY CLASH: ${facName} already has another class assigned at Period ${facultyClash.periodNumber} on ${day} (${facultyClash.branch}-${facultyClash.semester} ${facultyClash.section})!`,
         });
       }
     }
 
-    // 2. Conflict check: Ensure room is not occupied by another class in the same day and period
+    // 3. Conflict check: Ensure room is not occupied by another class in the same day and period
     if (roomNo && typeof roomNo === "string" && roomNo.trim() !== "") {
       const trimmedRoom = roomNo.trim();
       const roomClash = await prisma.masterTimetable.findFirst({
@@ -660,23 +791,29 @@ router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, asy
           periodNumber: Number(periodNumber),
           roomNo: trimmedRoom,
           academicYear,
-          NOT: {
-            AND: [
-              { branch },
-              { semester: Number(semester) },
-              { section },
-            ],
-          },
+          ...(existingRecord ? { id: { not: existingRecord.id } } : {}),
         },
         include: { course: true },
       });
 
       if (roomClash) {
         return res.status(409).json({
-          error: `⚠️ ROOM CLASH: Room ${trimmedRoom} is already occupied by ${roomClash.branch}-${roomClash.semester} (${roomClash.section}) in Period ${roomClash.periodNumber} on ${day} (${academicYear})!`,
+          error: `⚠️ ROOM CLASH: Room ${trimmedRoom} is already booked by ${roomClash.branch}-${roomClash.semester} (${roomClash.section}) in Period ${roomClash.periodNumber} on ${day} (${academicYear})!`,
         });
       }
     }
+
+    const STANDARD_TIMES: Record<number, { start: string; end: string }> = {
+      1: { start: "08:45 AM", end: "09:45 AM" },
+      2: { start: "09:45 AM", end: "10:45 AM" },
+      3: { start: "10:45 AM", end: "11:45 AM" },
+      4: { start: "11:45 AM", end: "12:45 PM" },
+      5: { start: "01:30 PM", end: "02:30 PM" },
+      6: { start: "02:30 PM", end: "03:30 PM" },
+      7: { start: "03:30 PM", end: "04:30 PM" },
+    };
+
+    const periodTimes = STANDARD_TIMES[Number(periodNumber)] || { start: "09:00 AM", end: "10:00 AM" };
 
     const updated = await prisma.masterTimetable.upsert({
       where: {
@@ -701,8 +838,8 @@ router.put("/timetable/update-period", authenticateToken, requireSuperAdmin, asy
         section,
         day,
         periodNumber: Number(periodNumber),
-        startTime: "09:00 AM",
-        endTime: "10:00 AM",
+        startTime: periodTimes.start,
+        endTime: periodTimes.end,
         academicYear,
         facultyId: facultyId || null,
         courseId: courseId || null,

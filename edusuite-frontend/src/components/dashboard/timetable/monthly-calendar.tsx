@@ -1,29 +1,44 @@
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, Calendar, AlertCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, AlertCircle, BookOpen, FlaskConical, Clock } from "lucide-react";
 import { Panel } from "@/components/dashboard/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import type { CalendarEvent } from "@/data/faculty-mock-data";
+import type { CalendarEvent, WeeklySlot } from "@/data/faculty-mock-data";
 
 interface MonthlyCalendarProps {
   events: CalendarEvent[];
+  weeklySlots?: WeeklySlot[];
 }
 
-export function MonthlyCalendar({ events }: MonthlyCalendarProps) {
+export function MonthlyCalendar({ events, weeklySlots = [] }: MonthlyCalendarProps) {
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  const [currentDate, setCurrentDate] = useState(() => new Date());
 
-  // Focus calendar on August 2026
-  const monthName = "August 2026";
-  const daysInMonth = 31;
-  const startDayOffset = 6; // August 1, 2026 is a Saturday, so offset is 6 (Sun=0, Mon=1, ..., Sat=6)
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth(); // 0-indexed
+  const monthName = currentDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startDayOffset = new Date(year, month, 1).getDay(); // 0 = Sun, 1 = Mon ...
 
   const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+  const handlePrevMonth = () => {
+    setCurrentDate(new Date(year, month - 1, 1));
+    setSelectedDay(null);
+  };
+
+  const handleNextMonth = () => {
+    setCurrentDate(new Date(year, month + 1, 1));
+    setSelectedDay(null);
+  };
+
   // Helper to format date string to check events
   const getEventForDay = (dayNum: number): CalendarEvent | undefined => {
-    const dateStr = `2026-08-${String(dayNum).padStart(2, "0")}`;
+    const mm = String(month + 1).padStart(2, "0");
+    const dd = String(dayNum).padStart(2, "0");
+    const dateStr = `${year}-${mm}-${dd}`;
     return events.find((e) => e.date === dateStr);
   };
 
@@ -73,12 +88,15 @@ export function MonthlyCalendar({ events }: MonthlyCalendarProps) {
     );
   }
 
-  const getSelectedDayDetails = () => {
-    if (!selectedDay) return null;
-    return getEventForDay(selectedDay);
-  };
+  const selectedEvent = selectedDay ? getEventForDay(selectedDay) : null;
+  const selectedDateObj = selectedDay ? new Date(year, month, selectedDay) : null;
+  const selectedWeekday = selectedDateObj ? selectedDateObj.toLocaleDateString("en-US", { weekday: "long" }) : "";
+  const selectedFormatted = selectedDateObj ? selectedDateObj.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "";
 
-  const selectedEvent = getSelectedDayDetails();
+  // Get real timetable slots for the selected day of the week
+  const dayTimetableSlots = weeklySlots.filter(
+    (s) => s.day.toLowerCase() === selectedWeekday.toLowerCase()
+  );
 
   return (
     <Panel
@@ -89,13 +107,13 @@ export function MonthlyCalendar({ events }: MonthlyCalendarProps) {
       <div className="space-y-4 text-xs">
         {/* Calendar Nav */}
         <div className="flex justify-between items-center bg-muted/40 p-2.5 rounded-xl border border-border/40">
-          <Button variant="ghost" size="icon" className="size-7 rounded-lg cursor-pointer">
+          <Button variant="ghost" size="icon" onClick={handlePrevMonth} className="size-7 rounded-lg cursor-pointer">
             <ChevronLeft className="size-4" />
           </Button>
           <span className="font-display font-extrabold text-sm flex items-center gap-1.5 text-foreground">
             <Calendar className="size-4 text-primary" /> {monthName}
           </span>
-          <Button variant="ghost" size="icon" className="size-7 rounded-lg cursor-pointer">
+          <Button variant="ghost" size="icon" onClick={handleNextMonth} className="size-7 rounded-lg cursor-pointer">
             <ChevronRight className="size-4" />
           </Button>
         </div>
@@ -121,7 +139,7 @@ export function MonthlyCalendar({ events }: MonthlyCalendarProps) {
               <Calendar className="size-5 text-primary" /> Schedule Details
             </SheetTitle>
             <SheetDescription>
-              Detailed classes and campus events scheduled for August {selectedDay}, 2026.
+              {selectedFormatted ? `Classes and events for ${selectedFormatted} (${selectedWeekday}).` : "Select a day from the calendar to inspect schedule."}
             </SheetDescription>
           </SheetHeader>
           
@@ -135,47 +153,47 @@ export function MonthlyCalendar({ events }: MonthlyCalendarProps) {
                 </div>
                 <h4 className="font-extrabold text-sm leading-snug">{selectedEvent.title}</h4>
               </div>
-            ) : (
-              <div className="p-4 rounded-2xl bg-muted/40 border text-muted-foreground flex items-center gap-2">
-                <AlertCircle className="size-4.5" /> No specific institutional events scheduled.
-              </div>
-            )}
+            ) : null}
 
-            {/* Simulated schedule timeline */}
+            {/* Timetable schedule for the selected weekday */}
             <div className="space-y-4">
-              <h5 className="font-extrabold uppercase tracking-wider text-muted-foreground text-[0.65rem]">
-                Period Timeline
-              </h5>
+              <div className="flex items-center justify-between">
+                <h5 className="font-extrabold uppercase tracking-wider text-muted-foreground text-[0.65rem]">
+                  {selectedWeekday} Timetable Schedule
+                </h5>
+                <span className="font-mono text-[0.65rem] text-muted-foreground">
+                  {dayTimetableSlots.length} {dayTimetableSlots.length === 1 ? "Session" : "Sessions"}
+                </span>
+              </div>
               
               {selectedEvent?.type === "Holiday" ? (
                 <div className="text-center py-6 text-muted-foreground italic border border-dashed rounded-2xl bg-muted/10">
                   Campus Closed (Holiday). No classes scheduled.
                 </div>
+              ) : dayTimetableSlots.length > 0 ? (
+                <div className="relative border-l-2 border-primary/30 pl-4 ml-2 space-y-4">
+                  {dayTimetableSlots.map((slot, idx) => (
+                    <div key={slot.timetableId || idx} className="relative">
+                      <div className="absolute -left-[21px] top-1 size-2 rounded-full border-2 border-background bg-primary" />
+                      <div>
+                        <span className="font-mono text-muted-foreground text-[0.6rem] flex items-center gap-1">
+                          <Clock className="size-2.5 text-primary/70" /> {slot.timeSlot || `${slot.startTime} - ${slot.endTime}`}
+                        </span>
+                        <h6 className="font-bold text-foreground mt-0.5 flex items-center gap-1.5">
+                          {slot.isLab ? <FlaskConical className="size-3 text-emerald-600" /> : <BookOpen className="size-3 text-blue-600" />}
+                          {slot.subject}
+                        </h6>
+                        <p className="text-muted-foreground text-[0.65rem] mt-0.5 font-medium">
+                          {slot.code} &middot; Sec {slot.section} &middot; Room {slot.room}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <div className="relative border-l-2 border-border/60 pl-4 ml-2 space-y-4">
-                  <div className="relative">
-                    <div className="absolute -left-[21px] top-1 size-2 rounded-full border-2 border-white bg-primary" />
-                    <div>
-                      <span className="font-mono text-muted-foreground text-[0.6rem]">09:00 - 10:00</span>
-                      <h6 className="font-bold text-foreground mt-0.5">Theory Lecture: Core Subject</h6>
-                      <p className="text-muted-foreground text-[0.65rem] mt-0.5">Section A &middot; Room 302</p>
-                    </div>
-                  </div>
-                  <div className="relative">
-                    <div className="absolute -left-[21px] top-1 size-2 rounded-full border-2 border-white bg-primary" />
-                    <div>
-                      <span className="font-mono text-muted-foreground text-[0.6rem]">11:15 - 12:15</span>
-                      <h6 className="font-bold text-foreground mt-0.5">Theory Lecture: Elective Subject</h6>
-                      <p className="text-muted-foreground text-[0.65rem] mt-0.5">Section B &middot; Room 108</p>
-                    </div>
-                  </div>
-                  <div className="relative">
-                    <div className="absolute -left-[21px] top-1 size-2 rounded-full border-2 border-white bg-muted" />
-                    <div>
-                      <span className="font-mono text-muted-foreground text-[0.6rem]">Afternoon Slot</span>
-                      <h6 className="font-semibold text-muted-foreground mt-0.5">Free Period / Self Study</h6>
-                    </div>
-                  </div>
+                <div className="p-4 rounded-2xl bg-muted/20 border text-muted-foreground flex items-center gap-2">
+                  <AlertCircle className="size-4 shrink-0 text-muted-foreground/60" />
+                  <span>No scheduled classes for {selectedWeekday || "this day"}.</span>
                 </div>
               )}
             </div>

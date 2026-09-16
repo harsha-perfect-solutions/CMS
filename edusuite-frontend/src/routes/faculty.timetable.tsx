@@ -160,7 +160,7 @@ function FacultyTimetablePage() {
         <div className="flex justify-between items-start border-b border-black/30 pb-3">
           <div>
             <h1 className="text-xl font-black uppercase tracking-wider text-black">
-              EduSuite Pro ERP — Faculty Academic Timetable
+              Faculty Academic Timetable
             </h1>
             <p className="text-xs text-gray-700">Official Institutional Teaching Schedule</p>
           </div>
@@ -234,7 +234,7 @@ function FacultyTimetablePage() {
                 <WeeklyGrid slots={data?.weeklyGrid || []} />
 
                 {/* Monthly calendar view */}
-                <MonthlyCalendar events={data?.conflicts ? [] : []} />
+                <MonthlyCalendar events={data?.conflicts ? [] : []} weeklySlots={data?.weeklyGrid || []} />
 
                 {/* Rooms & Labs Assigned */}
                 <RoomAllocationTable allocations={data?.roomAllocations || []} />

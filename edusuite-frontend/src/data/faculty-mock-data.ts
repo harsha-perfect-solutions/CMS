@@ -165,6 +165,8 @@ export type WeeklySlotType = "Theory" | "Lab" | "Tutorial" | "Project" | "Semina
 export type SpecialSlotType = "Lunch" | "Free Period";
 
 export interface WeeklySlot {
+  id?: string;
+  timetableId?: string;
   day: "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday";
   timeSlot: string;
   startTime: string;

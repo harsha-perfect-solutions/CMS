@@ -19,10 +19,19 @@ export const Route = createFileRoute("/faculty/attendance")({
   head: () => ({
     meta: [{ title: "Attendance Management — EduSuite Pro" }],
   }),
+  validateSearch: (search: Record<string, unknown>) => {
+    return {
+      timetableId: (search.timetableId as string) || undefined,
+      semester: search.semester ? Number(search.semester) : undefined,
+      section: (search.section as string) || undefined,
+      period: search.period ? Number(search.period) : undefined,
+    };
+  },
   component: FacultyAttendancePage,
 });
 
 function FacultyAttendancePage() {
+  const searchParams = Route.useSearch();
   const { profile } = useRole();
 
   const [loading, setLoading] = useState(true);
@@ -171,6 +180,28 @@ function FacultyAttendancePage() {
       setLoadingRoster(false);
     }
   };
+
+  // Auto-open session roster if timetableId is passed via navigation from Timetable
+  useEffect(() => {
+    if (searchParams.timetableId && !activeFormSlot && !loading) {
+      const match = todayClasses.find((c) => (c.timetableId || c.id) === searchParams.timetableId);
+      if (match) {
+        handleTakeAttendance(match);
+      } else {
+        handleTakeAttendance({
+          id: searchParams.timetableId,
+          timetableId: searchParams.timetableId,
+          periodNumber: searchParams.period || 1,
+          time: "Scheduled Session",
+          subject: "Class Session",
+          section: searchParams.section || "A",
+          rawSection: searchParams.section || "Section A",
+          semester: searchParams.semester || 1,
+          status: "Ongoing",
+        });
+      }
+    }
+  }, [searchParams.timetableId, todayClasses, activeFormSlot, loading]);
 
   const handleViewRegister = (slot: TodayClassItem) => {
     setSelectedSubject(slot.subject);

@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { prisma } from "../../db";
 import { authenticateToken, AuthenticatedRequest } from "../auth/auth.routes";
 import { requireSuperAdmin, auditLog } from "../super-admin/super-admin.routes";
+import { normalizeBranchCode, formatSectionDisplay } from "../../lib/department-utils";
 
 const router = Router();
 
@@ -183,6 +184,120 @@ router.get("/", authenticateToken, async (req: AuthenticatedRequest, res: Respon
         attendanceRisk: Math.round(allEnrolledCount * 0.05),
         pendingFees: allPendingFees,
       },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/students/my-timetable: Return authoritative timetable for authenticated student
+router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    if (!authUserId) {
+      return res.status(401).json({ error: "Unauthorized. Authentication session required." });
+    }
+
+    const student = await prisma.student.findUnique({
+      where: { id: authUserId },
+      select: {
+        id: true,
+        rollNumber: true,
+        name: true,
+        department: true,
+        semester: true,
+        section: true,
+        year: true,
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({ error: "Student profile not found." });
+    }
+
+    const branch = normalizeBranchCode(student.department || undefined);
+    const semester = student.semester || 1;
+    const sectionObj = formatSectionDisplay(student.section || undefined);
+    const section = sectionObj.full;
+    const academicYear = (req.query.academicYear as string) || "2026-27";
+
+    const records = await prisma.masterTimetable.findMany({
+      where: {
+        branch,
+        semester,
+        section,
+        ...(academicYear ? { academicYear } : {}),
+      },
+      include: { faculty: true, course: true },
+      orderBy: [{ day: "asc" }, { periodNumber: "asc" }],
+    });
+
+    const now = new Date();
+    const todayName = now.toLocaleDateString("en-US", { weekday: "long" });
+    const currentMins = now.getHours() * 60 + now.getMinutes();
+
+    const parseTimeToMins = (tStr: string): number => {
+      if (!tStr) return 0;
+      const match = tStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+      if (!match) return 0;
+      let hrs = parseInt(match[1], 10);
+      const mins = parseInt(match[2], 10);
+      const ampm = match[3]?.toUpperCase();
+      if (ampm === "PM" && hrs < 12) hrs += 12;
+      if (ampm === "AM" && hrs === 12) hrs = 0;
+      return hrs * 60 + mins;
+    };
+
+    const schedule = records.map((r) => {
+      const startMins = parseTimeToMins(r.startTime);
+      const endMins = parseTimeToMins(r.endTime);
+      const isCurrentDay = r.day.toLowerCase() === todayName.toLowerCase();
+      let status: "Completed" | "Ongoing" | "Upcoming" = "Upcoming";
+      if (isCurrentDay) {
+        if (currentMins >= endMins) status = "Completed";
+        else if (currentMins >= startMins && currentMins < endMins) status = "Ongoing";
+      }
+
+      return {
+        id: r.id,
+        timetableId: r.id,
+        day: r.day,
+        periodNumber: r.periodNumber,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        subjectCode: r.course ? r.course.code : "",
+        subjectName: r.course ? r.course.name : "Assigned Lecture",
+        facultyId: r.facultyId || null,
+        facultyName: r.faculty ? r.faculty.name : (r.facultyId ? "Faculty Member" : "Faculty Not Assigned"),
+        roomNo: r.roomNo || "Room 101",
+        isLab: r.isLab,
+        branch: r.branch,
+        semester: r.semester,
+        section: r.section,
+        academicYear: r.academicYear || "2026-27",
+        status,
+        isOngoing: status === "Ongoing",
+      };
+    });
+
+    const todayClasses = schedule.filter((s) => s.day.toLowerCase() === todayName.toLowerCase());
+
+    return res.json({
+      student: {
+        id: student.id,
+        rollNumber: student.rollNumber,
+        name: student.name,
+        department: student.department,
+        branch,
+        semester,
+        section,
+      },
+      branch,
+      semester,
+      section,
+      academicYear: records.length > 0 ? (records[0].academicYear || academicYear) : academicYear,
+      todayClasses,
+      schedule,
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
