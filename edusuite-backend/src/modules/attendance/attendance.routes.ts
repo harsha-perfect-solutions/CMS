@@ -1428,7 +1428,8 @@ router.post(["/faculty/session/:timetableId/mark", "/faculty/session/:timetableI
     const authUserId = req.userId;
     const authRole = (req.userRole || "").toLowerCase();
     const { timetableId } = req.params;
-    const { date, records } = req.body;
+    const { date } = req.body;
+    const records = req.body.records || req.body.students;
 
     if (!authUserId) {
       return res.status(401).json({ error: "Unauthorized." });

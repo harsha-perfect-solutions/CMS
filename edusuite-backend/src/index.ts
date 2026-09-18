@@ -62,8 +62,10 @@ import inventoryRoutes from "./modules/inventory/inventory.routes";
 import procurementRoutes from "./modules/procurement/procurement.routes";
 import lessonPlansRoutes from "./modules/lesson-plans/lesson-plans.routes";
 import leaveRoutes from "./modules/leave/leave.routes";
+import anitsRoutes from "./modules/anits/anits.routes";
 
 // Register routes
+app.use("/api/anits", anitsRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/exams", examRoutes);

@@ -17,6 +17,7 @@ import { Route as AccreditationRouteImport } from './routes/accreditation'
 import { Route as AdmissionRouteImport } from './routes/admission'
 import { Route as AiAnalyticsRouteImport } from './routes/ai-analytics'
 import { Route as AlumniRouteImport } from './routes/alumni'
+import { Route as AnitsRouteImport } from './routes/anits'
 import { Route as ApprovalCenterRouteImport } from './routes/approval-center'
 import { Route as ApprovalWorkflowsRouteImport } from './routes/approval-workflows'
 import { Route as AttendanceRouteImport } from './routes/attendance'
@@ -80,6 +81,14 @@ import { Route as AiAnalyticsNotificationsRouteImport } from './routes/ai-analyt
 import { Route as AiAnalyticsReportsRouteImport } from './routes/ai-analytics.reports'
 import { Route as AiAnalyticsSettingsRouteImport } from './routes/ai-analytics.settings'
 import { Route as AiAnalyticsStudentRiskRouteImport } from './routes/ai-analytics.student-risk'
+import { Route as AnitsAttendanceRouteImport } from './routes/anits.attendance'
+import { Route as AnitsDashboardRouteImport } from './routes/anits.dashboard'
+import { Route as AnitsForgotPasswordRouteImport } from './routes/anits.forgot-password'
+import { Route as AnitsLoginRouteImport } from './routes/anits.login'
+import { Route as AnitsMyClassesRouteImport } from './routes/anits.my-classes'
+import { Route as AnitsProfileRouteImport } from './routes/anits.profile'
+import { Route as AnitsReportsRouteImport } from './routes/anits.reports'
+import { Route as AnitsTimetableRouteImport } from './routes/anits.timetable'
 import { Route as DashboardAdmissionRouteImport } from './routes/dashboard.admission'
 import { Route as DashboardLibrarianRouteImport } from './routes/dashboard.librarian'
 import { Route as DashboardPreAdmissionRouteImport } from './routes/dashboard.pre-admission'
@@ -682,6 +691,11 @@ const AlumniRoute = AlumniRouteImport.update({
   path: '/alumni',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AnitsRoute = AnitsRouteImport.update({
+  id: '/anits',
+  path: '/anits',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApprovalCenterRoute = ApprovalCenterRouteImport.update({
   id: '/approval-center',
   path: '/approval-center',
@@ -999,6 +1013,46 @@ const AiAnalyticsStudentRiskRoute = AiAnalyticsStudentRiskRouteImport.update({
   id: '/student-risk',
   path: '/student-risk',
   getParentRoute: () => AiAnalyticsRoute,
+} as any)
+const AnitsAttendanceRoute = AnitsAttendanceRouteImport.update({
+  id: '/attendance',
+  path: '/attendance',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsDashboardRoute = AnitsDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsForgotPasswordRoute = AnitsForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsLoginRoute = AnitsLoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsMyClassesRoute = AnitsMyClassesRouteImport.update({
+  id: '/my-classes',
+  path: '/my-classes',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsProfileRoute = AnitsProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsReportsRoute = AnitsReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsTimetableRoute = AnitsTimetableRouteImport.update({
+  id: '/timetable',
+  path: '/timetable',
+  getParentRoute: () => AnitsRoute,
 } as any)
 const DashboardAdmissionRoute = DashboardAdmissionRouteImport.update({
   id: '/admission',
@@ -4133,6 +4187,7 @@ export interface FileRoutesByFullPath {
   '/admission': typeof AdmissionRoute
   '/ai-analytics': typeof AiAnalyticsRouteWithChildren
   '/alumni': typeof AlumniRoute
+  '/anits': typeof AnitsRouteWithChildren
   '/approval-center': typeof ApprovalCenterRoute
   '/approval-workflows': typeof ApprovalWorkflowsRoute
   '/attendance': typeof AttendanceRoute
@@ -4195,6 +4250,14 @@ export interface FileRoutesByFullPath {
   '/ai-analytics/reports': typeof AiAnalyticsReportsRoute
   '/ai-analytics/settings': typeof AiAnalyticsSettingsRoute
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
+  '/anits/attendance': typeof AnitsAttendanceRoute
+  '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/forgot-password': typeof AnitsForgotPasswordRoute
+  '/anits/login': typeof AnitsLoginRoute
+  '/anits/my-classes': typeof AnitsMyClassesRoute
+  '/anits/profile': typeof AnitsProfileRoute
+  '/anits/reports': typeof AnitsReportsRoute
+  '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
   '/dashboard/librarian': typeof DashboardLibrarianRouteWithChildren
   '/dashboard/pre-admission': typeof DashboardPreAdmissionRoute
@@ -4766,6 +4829,7 @@ export interface FileRoutesByTo {
   '/accreditation': typeof AccreditationRoute
   '/admission': typeof AdmissionRoute
   '/alumni': typeof AlumniRoute
+  '/anits': typeof AnitsRouteWithChildren
   '/approval-center': typeof ApprovalCenterRoute
   '/approval-workflows': typeof ApprovalWorkflowsRoute
   '/attendance': typeof AttendanceRoute
@@ -4810,6 +4874,14 @@ export interface FileRoutesByTo {
   '/ai-analytics/reports': typeof AiAnalyticsReportsRoute
   '/ai-analytics/settings': typeof AiAnalyticsSettingsRoute
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
+  '/anits/attendance': typeof AnitsAttendanceRoute
+  '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/forgot-password': typeof AnitsForgotPasswordRoute
+  '/anits/login': typeof AnitsLoginRoute
+  '/anits/my-classes': typeof AnitsMyClassesRoute
+  '/anits/profile': typeof AnitsProfileRoute
+  '/anits/reports': typeof AnitsReportsRoute
+  '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
   '/dashboard/pre-admission': typeof DashboardPreAdmissionRoute
   '/dean/dashboard': typeof DeanDashboardRoute
@@ -5374,6 +5446,7 @@ export interface FileRoutesById {
   '/admission': typeof AdmissionRoute
   '/ai-analytics': typeof AiAnalyticsRouteWithChildren
   '/alumni': typeof AlumniRoute
+  '/anits': typeof AnitsRouteWithChildren
   '/approval-center': typeof ApprovalCenterRoute
   '/approval-workflows': typeof ApprovalWorkflowsRoute
   '/attendance': typeof AttendanceRoute
@@ -5436,6 +5509,14 @@ export interface FileRoutesById {
   '/ai-analytics/reports': typeof AiAnalyticsReportsRoute
   '/ai-analytics/settings': typeof AiAnalyticsSettingsRoute
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
+  '/anits/attendance': typeof AnitsAttendanceRoute
+  '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/forgot-password': typeof AnitsForgotPasswordRoute
+  '/anits/login': typeof AnitsLoginRoute
+  '/anits/my-classes': typeof AnitsMyClassesRoute
+  '/anits/profile': typeof AnitsProfileRoute
+  '/anits/reports': typeof AnitsReportsRoute
+  '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
   '/dashboard/librarian': typeof DashboardLibrarianRouteWithChildren
   '/dashboard/pre-admission': typeof DashboardPreAdmissionRoute
@@ -6010,6 +6091,7 @@ export interface FileRouteTypes {
     | '/admission'
     | '/ai-analytics'
     | '/alumni'
+    | '/anits'
     | '/approval-center'
     | '/approval-workflows'
     | '/attendance'
@@ -6072,6 +6154,14 @@ export interface FileRouteTypes {
     | '/ai-analytics/reports'
     | '/ai-analytics/settings'
     | '/ai-analytics/student-risk'
+    | '/anits/attendance'
+    | '/anits/dashboard'
+    | '/anits/forgot-password'
+    | '/anits/login'
+    | '/anits/my-classes'
+    | '/anits/profile'
+    | '/anits/reports'
+    | '/anits/timetable'
     | '/dashboard/admission'
     | '/dashboard/librarian'
     | '/dashboard/pre-admission'
@@ -6643,6 +6733,7 @@ export interface FileRouteTypes {
     | '/accreditation'
     | '/admission'
     | '/alumni'
+    | '/anits'
     | '/approval-center'
     | '/approval-workflows'
     | '/attendance'
@@ -6687,6 +6778,14 @@ export interface FileRouteTypes {
     | '/ai-analytics/reports'
     | '/ai-analytics/settings'
     | '/ai-analytics/student-risk'
+    | '/anits/attendance'
+    | '/anits/dashboard'
+    | '/anits/forgot-password'
+    | '/anits/login'
+    | '/anits/my-classes'
+    | '/anits/profile'
+    | '/anits/reports'
+    | '/anits/timetable'
     | '/dashboard/admission'
     | '/dashboard/pre-admission'
     | '/dean/dashboard'
@@ -7250,6 +7349,7 @@ export interface FileRouteTypes {
     | '/admission'
     | '/ai-analytics'
     | '/alumni'
+    | '/anits'
     | '/approval-center'
     | '/approval-workflows'
     | '/attendance'
@@ -7312,6 +7412,14 @@ export interface FileRouteTypes {
     | '/ai-analytics/reports'
     | '/ai-analytics/settings'
     | '/ai-analytics/student-risk'
+    | '/anits/attendance'
+    | '/anits/dashboard'
+    | '/anits/forgot-password'
+    | '/anits/login'
+    | '/anits/my-classes'
+    | '/anits/profile'
+    | '/anits/reports'
+    | '/anits/timetable'
     | '/dashboard/admission'
     | '/dashboard/librarian'
     | '/dashboard/pre-admission'
@@ -7885,6 +7993,7 @@ export interface RootRouteChildren {
   AdmissionRoute: typeof AdmissionRoute
   AiAnalyticsRoute: typeof AiAnalyticsRouteWithChildren
   AlumniRoute: typeof AlumniRoute
+  AnitsRoute: typeof AnitsRouteWithChildren
   ApprovalCenterRoute: typeof ApprovalCenterRoute
   ApprovalWorkflowsRoute: typeof ApprovalWorkflowsRoute
   AttendanceRoute: typeof AttendanceRoute
@@ -7999,6 +8108,13 @@ declare module '@tanstack/react-router' {
       path: '/alumni'
       fullPath: '/alumni'
       preLoaderRoute: typeof AlumniRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/anits': {
+      id: '/anits'
+      path: '/anits'
+      fullPath: '/anits'
+      preLoaderRoute: typeof AnitsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/approval-center': {
@@ -8441,6 +8557,62 @@ declare module '@tanstack/react-router' {
       fullPath: '/ai-analytics/student-risk'
       preLoaderRoute: typeof AiAnalyticsStudentRiskRouteImport
       parentRoute: typeof AiAnalyticsRoute
+    }
+    '/anits/attendance': {
+      id: '/anits/attendance'
+      path: '/attendance'
+      fullPath: '/anits/attendance'
+      preLoaderRoute: typeof AnitsAttendanceRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/dashboard': {
+      id: '/anits/dashboard'
+      path: '/dashboard'
+      fullPath: '/anits/dashboard'
+      preLoaderRoute: typeof AnitsDashboardRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/forgot-password': {
+      id: '/anits/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/anits/forgot-password'
+      preLoaderRoute: typeof AnitsForgotPasswordRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/login': {
+      id: '/anits/login'
+      path: '/login'
+      fullPath: '/anits/login'
+      preLoaderRoute: typeof AnitsLoginRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/my-classes': {
+      id: '/anits/my-classes'
+      path: '/my-classes'
+      fullPath: '/anits/my-classes'
+      preLoaderRoute: typeof AnitsMyClassesRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/profile': {
+      id: '/anits/profile'
+      path: '/profile'
+      fullPath: '/anits/profile'
+      preLoaderRoute: typeof AnitsProfileRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/reports': {
+      id: '/anits/reports'
+      path: '/reports'
+      fullPath: '/anits/reports'
+      preLoaderRoute: typeof AnitsReportsRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/timetable': {
+      id: '/anits/timetable'
+      path: '/timetable'
+      fullPath: '/anits/timetable'
+      preLoaderRoute: typeof AnitsTimetableRouteImport
+      parentRoute: typeof AnitsRoute
     }
     '/dashboard/admission': {
       id: '/dashboard/admission'
@@ -12400,6 +12572,30 @@ const AiAnalyticsRouteWithChildren = AiAnalyticsRoute._addFileChildren(
   AiAnalyticsRouteChildren,
 )
 
+interface AnitsRouteChildren {
+  AnitsAttendanceRoute: typeof AnitsAttendanceRoute
+  AnitsDashboardRoute: typeof AnitsDashboardRoute
+  AnitsForgotPasswordRoute: typeof AnitsForgotPasswordRoute
+  AnitsLoginRoute: typeof AnitsLoginRoute
+  AnitsMyClassesRoute: typeof AnitsMyClassesRoute
+  AnitsProfileRoute: typeof AnitsProfileRoute
+  AnitsReportsRoute: typeof AnitsReportsRoute
+  AnitsTimetableRoute: typeof AnitsTimetableRoute
+}
+
+const AnitsRouteChildren: AnitsRouteChildren = {
+  AnitsAttendanceRoute: AnitsAttendanceRoute,
+  AnitsDashboardRoute: AnitsDashboardRoute,
+  AnitsForgotPasswordRoute: AnitsForgotPasswordRoute,
+  AnitsLoginRoute: AnitsLoginRoute,
+  AnitsMyClassesRoute: AnitsMyClassesRoute,
+  AnitsProfileRoute: AnitsProfileRoute,
+  AnitsReportsRoute: AnitsReportsRoute,
+  AnitsTimetableRoute: AnitsTimetableRoute,
+}
+
+const AnitsRouteWithChildren = AnitsRoute._addFileChildren(AnitsRouteChildren)
+
 interface DashboardLibrarianRouteChildren {
   DashboardLibrarianBooksRoute: typeof DashboardLibrarianBooksRoute
   DashboardLibrarianDigitalRoute: typeof DashboardLibrarianDigitalRoute
@@ -13942,6 +14138,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdmissionRoute: AdmissionRoute,
   AiAnalyticsRoute: AiAnalyticsRouteWithChildren,
   AlumniRoute: AlumniRoute,
+  AnitsRoute: AnitsRouteWithChildren,
   ApprovalCenterRoute: ApprovalCenterRoute,
   ApprovalWorkflowsRoute: ApprovalWorkflowsRoute,
   AttendanceRoute: AttendanceRoute,
