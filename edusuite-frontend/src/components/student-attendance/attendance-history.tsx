@@ -75,6 +75,7 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
             <option value="All">All Statuses</option>
             <option value="Present">Present</option>
             <option value="Absent">Absent</option>
+            <option value="Late">Late</option>
             <option value="Medical Leave">Medical Leave</option>
             <option value="On Duty">On Duty</option>
           </select>
@@ -114,34 +115,44 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {paginatedLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                    <td className="p-3.5 font-mono text-slate-700 dark:text-slate-300 font-semibold">{log.date}</td>
-                    <td className="p-3.5 text-slate-500">{log.day}</td>
-                    <td className="p-3.5 font-mono font-bold text-[#0b193c] dark:text-blue-400">{log.period}</td>
-                    <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">
-                      <div>{log.subjectName}</div>
-                      <span className="text-[10px] text-slate-400 font-mono font-normal">{log.subjectCode}</span>
+                {paginatedLogs.length > 0 ? (
+                  paginatedLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                      <td className="p-3.5 font-mono text-slate-700 dark:text-slate-300 font-semibold">{log.date}</td>
+                      <td className="p-3.5 text-slate-500">{log.day}</td>
+                      <td className="p-3.5 font-mono font-bold text-[#0b193c] dark:text-blue-400">{log.period}</td>
+                      <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">
+                        <div>{log.subjectName}</div>
+                        <span className="text-[10px] text-slate-400 font-mono font-normal">{log.subjectCode}</span>
+                      </td>
+                      <td className="p-3.5 text-slate-600 dark:text-slate-300">{log.facultyName}</td>
+                      <td className="p-3.5 font-mono text-slate-500">{log.room}</td>
+                      <td className="p-3.5 font-mono text-emerald-600 font-bold">{log.timeSlot}</td>
+                      <td className="p-3.5">
+                        <Badge
+                          className={
+                            log.status === "Present"
+                              ? "bg-emerald-500/10 text-emerald-600"
+                              : log.status === "Late"
+                                ? "bg-amber-500/10 text-amber-600"
+                                : log.status === "Absent"
+                                  ? "bg-red-500/10 text-red-600"
+                                  : "bg-purple-500/10 text-purple-600"
+                          }
+                        >
+                          {log.status}
+                        </Badge>
+                      </td>
+                      <td className="p-3.5 text-slate-500 max-w-xs truncate">{log.remarks}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={9} className="p-8 text-center text-slate-500 font-medium">
+                      No attendance records available yet.
                     </td>
-                    <td className="p-3.5 text-slate-600 dark:text-slate-300">{log.facultyName}</td>
-                    <td className="p-3.5 font-mono text-slate-500">{log.room}</td>
-                    <td className="p-3.5 font-mono text-emerald-600 font-bold">{log.timeSlot}</td>
-                    <td className="p-3.5">
-                      <Badge
-                        className={
-                          log.status === "Present"
-                            ? "bg-emerald-500/10 text-emerald-600"
-                            : log.status === "Absent"
-                              ? "bg-red-500/10 text-red-600"
-                              : "bg-purple-500/10 text-purple-600"
-                        }
-                      >
-                        {log.status}
-                      </Badge>
-                    </td>
-                    <td className="p-3.5 text-slate-500 max-w-xs truncate">{log.remarks}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -176,22 +187,46 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
         /* TIMELINE VIEW */
         <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-6 shadow-sm">
           <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Chronological Class Timeline View</h4>
-          <div className="relative border-l-2 border-slate-200 dark:border-slate-800 ml-4 space-y-6 pl-6">
-            {paginatedLogs.map((log) => (
-              <div key={log.id} className="relative group">
-                <div className={`absolute -left-[31px] top-1.5 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 ${log.status === "Present" ? "bg-emerald-500" : "bg-red-500"}`} />
-                <div className="p-4 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-mono text-[#0b193c] dark:text-blue-400 font-bold">{log.date} &middot; {log.timeSlot}</span>
-                    <Badge className={log.status === "Present" ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-600"}>{log.status}</Badge>
+          {paginatedLogs.length > 0 ? (
+            <div className="relative border-l-2 border-slate-200 dark:border-slate-800 ml-4 space-y-6 pl-6">
+              {paginatedLogs.map((log) => (
+                <div key={log.id} className="relative group">
+                  <div
+                    className={`absolute -left-[31px] top-1.5 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 ${
+                      log.status === "Present"
+                        ? "bg-emerald-500"
+                        : log.status === "Late"
+                          ? "bg-amber-500"
+                          : "bg-red-500"
+                    }`}
+                  />
+                  <div className="p-4 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-mono text-[#0b193c] dark:text-blue-400 font-bold">{log.date} &middot; {log.timeSlot}</span>
+                      <Badge
+                        className={
+                          log.status === "Present"
+                            ? "bg-emerald-500/10 text-emerald-600"
+                            : log.status === "Late"
+                              ? "bg-amber-500/10 text-amber-600"
+                              : "bg-red-500/10 text-red-600"
+                        }
+                      >
+                        {log.status}
+                      </Badge>
+                    </div>
+                    <h5 className="text-sm font-bold text-slate-900 dark:text-white">{log.subjectCode} - {log.subjectName}</h5>
+                    <p className="text-xs text-slate-500">Faculty: {log.facultyName} &middot; Room: {log.room}</p>
+                    <p className="text-[11px] text-slate-600 italic">"{log.remarks}"</p>
                   </div>
-                  <h5 className="text-sm font-bold text-slate-900 dark:text-white">{log.subjectCode} - {log.subjectName}</h5>
-                  <p className="text-xs text-slate-500">Faculty: {log.facultyName} &middot; Room: {log.room}</p>
-                  <p className="text-[11px] text-slate-600 italic">"{log.remarks}"</p>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-8 text-center text-slate-500 font-medium">
+              No attendance records available yet.
+            </div>
+          )}
         </div>
       )}
 

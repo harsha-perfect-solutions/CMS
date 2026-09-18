@@ -8,6 +8,7 @@ import {
   Filter,
   RefreshCw,
   Loader2,
+  Download,
 } from "lucide-react";
 import {
   AcademicYearOption,
@@ -16,6 +17,7 @@ import {
   StudentAttendanceProfile,
   TodayScheduleItem,
   AttendanceHistoryRecord,
+  LeaveBalanceSummary,
   YEAR_TO_SEMESTERS_MAP,
 } from "@/components/student-attendance/types";
 import api from "@/lib/api";
@@ -65,14 +67,15 @@ function StudentAttendancePage() {
       documentName: "medical_cert.pdf",
     },
   ]);
-  const [leaveBalance, setLeaveBalance] = useState({
-    totalLeaves: 12,
-    availedLeaves: 2,
+  const [leaveBalance, setLeaveBalance] = useState<LeaveBalanceSummary>({
     availableLeaves: 10,
-    medicalLeaves: 2,
-    casualLeaves: 0,
-    onDutyLeaves: 0,
-    pending: 0,
+    appliedLeaves: 2,
+    approved: 1,
+    pending: 1,
+    rejected: 0,
+    medical: 2,
+    emergency: 0,
+    onDuty: 0,
   });
 
   // Real data state from PostgreSQL
@@ -108,7 +111,16 @@ function StudentAttendancePage() {
         setError(res.data?.error || "Unable to fetch student attendance records.");
       }
     } catch (err: any) {
-      setError(err.message || "Network error loading attendance.");
+      const status = err.response?.status;
+      if (status === 401) {
+        setError("Session expired. Please sign in again.");
+      } else if (status === 403) {
+        setError("You are not authorized to view this attendance.");
+      } else if (status === 500) {
+        setError("Unable to load attendance. Please try again.");
+      } else {
+        setError(err.response?.data?.error || err.message || "Unable to load attendance. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
@@ -122,6 +134,34 @@ function StudentAttendancePage() {
     toast.info("Synchronizing attendance records with PostgreSQL...");
     await fetchStudentAttendance(true);
     toast.success("Attendance synchronized with real-time class submittals.");
+  };
+
+  const handleExportCSV = async () => {
+    try {
+      toast.info("Preparing your attendance ledger export...");
+      const token = typeof window !== "undefined" ? (localStorage.getItem("token") || localStorage.getItem("cms_token") || "") : "";
+      const res = await fetch("http://localhost:5000/api/attendance/student/export?format=csv", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!res.ok) throw new Error("Failed to export attendance records");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute(
+        "download",
+        `student_attendance_${dbProfile?.rollNumber || "my_attendance"}_${new Date().toISOString().split("T")[0]}.csv`
+      );
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Attendance ledger exported successfully.");
+    } catch (e: any) {
+      toast.error("Failed to export attendance records.");
+    }
   };
 
   const handleYearChange = (year: AcademicYearOption) => {
@@ -157,6 +197,7 @@ function StudentAttendancePage() {
     setLeaveBalance((prev) => ({
       ...prev,
       pending: prev.pending + 1,
+      appliedLeaves: prev.appliedLeaves + 1,
       availableLeaves: Math.max(prev.availableLeaves - 1, 0),
     }));
     toast.success("Leave application submitted to your class advisor.");
@@ -310,6 +351,20 @@ function StudentAttendancePage() {
             >
               <RefreshCw className="size-3.5" />
               Sync
+            </Button>
+          </div>
+
+          {/* EXPORT CSV BUTTON */}
+          <div className="pt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportCSV}
+              className="h-9 gap-1.5 text-xs font-semibold rounded-xl"
+              title="Export personal attendance records as CSV"
+            >
+              <Download className="size-3.5" />
+              Export
             </Button>
           </div>
         </div>

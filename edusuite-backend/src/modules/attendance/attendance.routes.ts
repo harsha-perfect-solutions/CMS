@@ -931,7 +931,7 @@ router.post("/mark", authenticateToken, async (req: AuthenticatedRequest, res: R
 // ==========================================
 // 6. EXPORT ATTENDANCE LOG API
 // ==========================================
-router.get(["/export", "/faculty/export"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+router.get(["/export", "/faculty/export", "/student/export"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const authUserId = req.userId;
     const authRole = (req.userRole || "").toLowerCase();
@@ -945,8 +945,12 @@ router.get(["/export", "/faculty/export"], authenticateToken, async (req: Authen
 
     const where: any = {};
 
-    // Strict security: if requester is faculty, restrict ONLY to sessions taught by them
-    if (authRole === "faculty") {
+    // Strict role scoping
+    if (authRole === "student") {
+      // Students can ONLY export their own attendance records
+      where.userId = authUserId;
+    } else if (authRole === "faculty") {
+      // Strict security: if requester is faculty, restrict ONLY to sessions taught by them
       where.OR = [
         { facultyId: authUserId },
         { timetable: { facultyId: authUserId } },
@@ -997,8 +1001,33 @@ router.get(["/export", "/faculty/export"], authenticateToken, async (req: Authen
       "ATTENDANCE_EXPORTED",
       "Attendance",
       "AttendanceRecord",
-      authRole === "faculty" ? `Faculty:${authUserId}` : "Exported Data"
+      authRole === "student" ? `Student:${authUserId}` : authRole === "faculty" ? `Faculty:${authUserId}` : "Exported Data"
     );
+
+    if (authRole === "student") {
+      const studentExportData = records.map((r) => ({
+        Date: r.date,
+        Subject: r.timetable?.course?.name || r.course?.name || "Subject",
+        CourseCode: r.timetable?.course?.code || r.course?.code || "",
+        Faculty: r.timetable?.faculty?.name || r.faculty?.name || "Faculty information unavailable",
+        Period: `Period ${r.periodNumber || 1}`,
+        Room: r.timetable?.roomNo || "Room 101",
+        Status: r.status,
+      }));
+
+      if (req.query.format === "csv" || req.headers["accept"] === "text/csv") {
+        const csvHeader = "Date,Subject,Course Code,Faculty,Period,Room,Status";
+        const csvRows = studentExportData.map((row) =>
+          `"${row.Date}","${row.Subject.replace(/"/g, '""')}","${row.CourseCode}","${row.Faculty.replace(/"/g, '""')}","${row.Period}","${row.Room}","${row.Status}"`
+        );
+        const csvOutput = [csvHeader, ...csvRows].join("\n");
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", `attachment; filename="student_attendance_${authUserId}_${new Date().toISOString().split("T")[0]}.csv"`);
+        return res.send(csvOutput);
+      }
+
+      return res.json(studentExportData);
+    }
 
     const exportData = records.map((r) => ({
       Date: r.date,
@@ -1394,7 +1423,7 @@ router.get("/faculty/session/:timetableId/roster", authenticateToken, async (req
 // ==========================================
 // 10. SUBMIT ATTENDANCE FOR A TIMETABLE SESSION (ATOMIC TRANSACTION)
 // ==========================================
-router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+router.post(["/faculty/session/:timetableId/mark", "/faculty/session/:timetableId/submit"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const authUserId = req.userId;
     const authRole = (req.userRole || "").toLowerCase();
@@ -1959,12 +1988,61 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
 router.get(["/student/my-attendance", "/student"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const authUserId = req.userId;
+    const authRole = (req.userRole || "").toLowerCase();
+
     if (!authUserId) {
-      return res.status(401).json({ error: "Unauthorized." });
+      return res.status(401).json({ error: "Session expired or unauthorized. Please sign in again." });
+    }
+
+    let targetStudentId = authUserId;
+
+    if (authRole === "student") {
+      const spoofedId = req.query.studentId as string;
+      if (spoofedId && spoofedId !== authUserId) {
+        return res.status(403).json({
+          error: "Access denied. Students are not authorized to view another student's attendance records.",
+        });
+      }
+      targetStudentId = authUserId;
+    } else if (authRole === "parent") {
+      const requestedId = req.query.studentId as string;
+      if (!requestedId) {
+        const linked = await prisma.student.findFirst({
+          where: { parentId: authUserId },
+          select: { id: true },
+        });
+        if (!linked) {
+          return res.status(404).json({ error: "No student linked to this parent account." });
+        }
+        targetStudentId = linked.id;
+      } else {
+        const studentMatch = await prisma.student.findFirst({
+          where: { id: requestedId, parentId: authUserId },
+        });
+        if (!studentMatch) {
+          return res.status(403).json({
+            error: "Access denied. You are not authorized to view this student's attendance.",
+          });
+        }
+        targetStudentId = studentMatch.id;
+      }
+    } else if (authRole === "super_admin" || authRole === "admin") {
+      const requestedId = req.query.studentId as string;
+      if (requestedId) {
+        targetStudentId = requestedId;
+      } else {
+        const firstStudent = await prisma.student.findFirst({ select: { id: true } });
+        if (firstStudent) targetStudentId = firstStudent.id;
+      }
+    } else {
+      // Faculty and others are forbidden from accessing the student personal attendance endpoint
+      return res.status(403).json({
+        error: "Access denied. Faculty must use faculty attendance management routes.",
+      });
     }
 
     const student = await prisma.student.findUnique({
-      where: { id: authUserId },
+      where: { id: targetStudentId },
       include: {
         attendanceRecords: {
           include: {
@@ -1985,14 +2063,21 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
 
     const records = student.attendanceRecords || [];
     const totalConducted = records.length;
-    const presentRecords = records.filter((r) => r.status === "Present" || r.status === "Late");
-    const presentClasses = presentRecords.length;
+    const presentClasses = records.filter((r) => r.status === "Present").length;
+    const lateClasses = records.filter((r) => r.status === "Late").length;
+    const attendedClasses = presentClasses + lateClasses;
     const absentClasses = records.filter((r) => r.status === "Absent").length;
     const leaveClasses = records.filter((r) => r.status === "Medical Leave" || r.status === "On Duty").length;
 
+    // Phase 3 canonical formula: (Present + Late) / Total Conducted * 100
     const overallAttendancePct = totalConducted > 0
-      ? Number(((presentClasses / totalConducted) * 100).toFixed(1))
+      ? Number(((attendedClasses / totalConducted) * 100).toFixed(1))
       : 0.0;
+
+    // Dynamic Academic Year calculation from semester
+    const sem = student.semester || 5;
+    const yr = Math.ceil(sem / 2);
+    const dynamicYear = (yr === 1 ? "1st Year" : yr === 2 ? "2nd Year" : yr === 3 ? "3rd Year" : "4th Year") as "1st Year" | "2nd Year" | "3rd Year" | "4th Year";
 
     // Group by course/subject
     const courseMap = new Map<string, {
@@ -2002,8 +2087,10 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       credits: number;
       facultyName: string;
       conducted: number;
-      attended: number;
+      present: number;
+      late: number;
       absent: number;
+      attended: number;
       leave: number;
       historyLogs: any[];
     }>();
@@ -2012,7 +2099,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       const courseObj = r.timetable?.course || r.course;
       const courseKey = courseObj?.code || r.courseId || "SUB";
       const courseName = courseObj?.name || "Department Course";
-      const facultyName = r.timetable?.faculty?.name || r.faculty?.name || "Course Faculty";
+      const facultyName = r.timetable?.faculty?.name || r.faculty?.name || "Faculty information unavailable";
       const credits = courseObj?.credits || 4;
 
       if (!courseMap.has(courseKey)) {
@@ -2023,8 +2110,10 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
           credits,
           facultyName,
           conducted: 0,
-          attended: 0,
+          present: 0,
+          late: 0,
           absent: 0,
+          attended: 0,
           leave: 0,
           historyLogs: [],
         });
@@ -2032,7 +2121,11 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
 
       const c = courseMap.get(courseKey)!;
       c.conducted += 1;
-      if (r.status === "Present" || r.status === "Late") {
+      if (r.status === "Present") {
+        c.present += 1;
+        c.attended += 1;
+      } else if (r.status === "Late") {
+        c.late += 1;
         c.attended += 1;
       } else if (r.status === "Absent") {
         c.absent += 1;
@@ -2052,46 +2145,70 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         room: r.timetable?.roomNo || "Room 101",
         status: r.status,
         mode: "Manual",
-        remarks: r.remarks || "Regular Session",
+        remarks: r.remarks || "Regular Session Attendance",
       });
     }
 
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
     const displayedSubjects = Array.from(courseMap.values()).map((c) => {
+      // Phase 3 canonical formula for subject-wise attendance
       const pct = c.conducted > 0 ? Number(((c.attended / c.conducted) * 100).toFixed(1)) : 0.0;
       const status = pct >= 85 ? "Above 85%" : pct >= 75 ? "75-85%" : "Below 75%";
+      const governanceStatus = pct >= 85 ? "GOOD / ELIGIBLE" : pct >= 75 ? "WARNING" : "LOW ATTENDANCE";
+
+      // Calculate actual monthly trends strictly from real session dates
+      const monthMap = new Map<string, { conducted: number; attended: number }>();
+      for (const log of c.historyLogs) {
+        const monthKey = log.date.substring(0, 7); // YYYY-MM
+        if (!monthMap.has(monthKey)) {
+          monthMap.set(monthKey, { conducted: 0, attended: 0 });
+        }
+        const m = monthMap.get(monthKey)!;
+        m.conducted += 1;
+        if (log.status === "Present" || log.status === "Late") {
+          m.attended += 1;
+        }
+      }
+
+      const monthlyTrend = Array.from(monthMap.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([monthKey, data]) => {
+          const monthNum = parseInt(monthKey.split("-")[1], 10) - 1;
+          const monthLabel = monthNames[monthNum] || monthKey;
+          const monthPct = data.conducted > 0 ? Number(((data.attended / data.conducted) * 100).toFixed(1)) : 0;
+          return { month: monthLabel, pct: monthPct, conducted: data.conducted };
+        });
+
       return {
         id: c.courseId,
-        academicYear: "3rd Year" as const,
+        academicYear: dynamicYear,
         semester: student.semester || 5,
         subjectCode: c.code,
         subjectName: c.name,
         facultyName: c.facultyName,
         facultyDesignation: "Faculty Member",
-        facultyEmail: "faculty@cms.com",
+        facultyEmail: c.facultyName !== "Faculty information unavailable" ? `${c.facultyName.toLowerCase().replace(/[^a-z]/g, "")}@anits.edu.in` : "unavailable@anits.edu.in",
         facultyAvatar: "",
         credits: c.credits,
         conducted: c.conducted,
+        present: c.present,
+        late: c.late,
         attended: c.attended,
         absent: c.absent,
         leave: c.leave,
         attendancePct: pct,
         status: status as "Above 85%" | "75-85%" | "Below 75%",
+        governanceStatus,
         classesNeeded75: pct < 75 ? Math.ceil((0.75 * c.conducted - c.attended) / 0.25) : 0,
         classesNeeded85: pct < 85 ? Math.ceil((0.85 * c.conducted - c.attended) / 0.15) : 0,
         classesMissed: c.absent,
         medicalLeaves: c.leave,
         facultyRemarks: pct >= 75 ? "Good consistency and attendance" : "Attendance shortage alert",
         aiRiskPrediction: pct < 75 ? ("High Shortage Risk" as const) : pct < 85 ? ("Moderate Risk" as const) : ("Low Risk" as const),
-        monthlyTrend: [
-          { month: "Jul", pct: 90 },
-          { month: "Aug", pct: 85 },
-          { month: "Sep", pct },
-        ],
-        weeklyTrend: [
-          { week: "W1", pct: 92 },
-          { week: "W2", pct: 88 },
-          { week: "W3", pct },
-        ],
+        monthlyTrend,
+        weeklyTrend: [],
+        hasTrendData: monthlyTrend.length >= 2,
         historyLogs: c.historyLogs,
       };
     });
@@ -2111,9 +2228,9 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         timeSlot: r.timetable ? `${r.timetable.startTime || "09:00 AM"} - ${r.timetable.endTime || "10:00 AM"}` : "Scheduled Session",
         subjectCode: courseObj?.code || r.courseId || "SUB",
         subjectName: courseObj?.name || "Department Course",
-        facultyName: r.timetable?.faculty?.name || r.faculty?.name || "Faculty",
+        facultyName: r.timetable?.faculty?.name || r.faculty?.name || "Faculty information unavailable",
         room: r.timetable?.roomNo || "Room 101",
-        status: r.status as "Present" | "Absent" | "Medical Leave" | "On Duty" | "Holiday",
+        status: r.status as "Present" | "Absent" | "Late" | "Medical Leave" | "On Duty" | "Holiday",
         mode: "Manual" as const,
         remarks: r.remarks || "Regular Session Attendance",
       };
@@ -2122,7 +2239,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
     const targetDateStr = new Date().toISOString().split("T")[0];
     const todayRecords = records.filter((r) => r.date === targetDateStr);
     const todayStatus = todayRecords.length > 0
-      ? (todayRecords.some((r) => r.status === "Present") ? "Present" : "Absent")
+      ? (todayRecords.some((r) => r.status === "Present" || r.status === "Late") ? "Present" : "Absent")
       : "Pending";
 
     const profile = {
@@ -2133,21 +2250,34 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       program: "B.Tech",
       branch: student.department || "N/A",
       section: student.section || "A",
-      academicYear: "3rd Year" as const,
+      academicYear: dynamicYear,
       semester: student.semester || 5,
       overallAttendancePct,
       todayAttendanceStatus: todayStatus as any,
       presentClasses,
       absentClasses,
+      lateClasses,
+      totalConducted,
       leaveClasses,
       condonationStatus: overallAttendancePct >= 75 ? ("Eligible" as const) : ("Condonation Required" as const),
-      currentStreak: Math.min(12, presentClasses),
-      classesRequiredFor75: overallAttendancePct < 75 ? Math.ceil((0.75 * totalConducted - presentClasses) / 0.25) : 0,
-      classesRequiredFor85: overallAttendancePct < 85 ? Math.ceil((0.85 * totalConducted - presentClasses) / 0.15) : 0,
+      currentStreak: Math.min(12, attendedClasses),
+      classesRequiredFor75: overallAttendancePct < 75 ? Math.ceil((0.75 * totalConducted - attendedClasses) / 0.25) : 0,
+      classesRequiredFor85: overallAttendancePct < 85 ? Math.ceil((0.85 * totalConducted - attendedClasses) / 0.15) : 0,
       lowAttendanceCount: displayedSubjects.filter((s) => s.attendancePct < 75).length,
     };
 
+    const summary = {
+      totalConducted,
+      present: presentClasses,
+      absent: absentClasses,
+      late: lateClasses,
+      attended: attendedClasses,
+      percentage: overallAttendancePct,
+      overallAttendancePct,
+    };
+
     return res.json({
+      summary,
       profile,
       subjects: displayedSubjects,
       history: historyLogs,
@@ -2157,6 +2287,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         overallPercentage: overallAttendancePct,
         presentClasses,
         absentClasses,
+        lateClasses,
         totalConducted,
       },
     });

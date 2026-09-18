@@ -27,6 +27,8 @@ export interface StudentAttendanceProfile {
   todayAttendanceStatus: "Present" | "Absent font-bold" | "Pending" | "Holiday";
   presentClasses: number;
   absentClasses: number;
+  lateClasses?: number;
+  totalConducted?: number;
   leaveClasses: number;
   condonationStatus: "Eligible" | "Condonation Required" | "Ineligible";
   currentStreak: number; // in days
@@ -57,7 +59,7 @@ export interface AttendanceHistoryRecord {
   subjectName: string;
   facultyName: string;
   room: string;
-  status: "Present" | "Absent" | "Medical Leave" | "On Duty" | "Holiday";
+  status: "Present" | "Absent" | "Late" | "Medical Leave" | "On Duty" | "Holiday";
   mode: "Biometric" | "QR Code" | "Manual";
   remarks: string;
 }
@@ -74,11 +76,14 @@ export interface SubjectAttendanceItem {
   facultyAvatar: string;
   credits: number;
   conducted: number;
+  present?: number;
+  late?: number;
   attended: number;
   absent: number;
   leave: number;
   attendancePct: number;
   status: "Above 85%" | "75-85%" | "Below 75%";
+  governanceStatus?: string;
   classesNeeded75: number;
   classesNeeded85: number;
   classesMissed: number;
@@ -87,6 +92,7 @@ export interface SubjectAttendanceItem {
   aiRiskPrediction: "Low Risk" | "Moderate Risk" | "High Shortage Risk";
   monthlyTrend: { month: string; pct: number }[];
   weeklyTrend: { week: string; pct: number }[];
+  hasTrendData?: boolean;
   historyLogs: AttendanceHistoryRecord[];
 }
 

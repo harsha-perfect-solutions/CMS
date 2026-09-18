@@ -97,63 +97,75 @@ export function SubjectAttendance({ subjects, onSelectSubject }: SubjectAttendan
                 <th className="p-3.5">Subject Code</th>
                 <th className="p-3.5">Subject Name</th>
                 <th className="p-3.5">Faculty</th>
-                <th className="p-3.5">Credits</th>
                 <th className="p-3.5">Conducted</th>
-                <th className="p-3.5">Attended</th>
+                <th className="p-3.5">Present</th>
                 <th className="p-3.5">Absent</th>
-                <th className="p-3.5">Leave</th>
+                <th className="p-3.5">Late</th>
                 <th className="p-3.5">Attendance %</th>
                 <th className="p-3.5">Status</th>
                 <th className="p-3.5">Classes Needed (75%)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {paginatedSubjects.map((sub) => (
-                <tr
-                  key={sub.id}
-                  onClick={() => onSelectSubject(sub)}
-                  className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 cursor-pointer transition-colors"
-                >
-                  <td className="p-3.5 font-mono font-bold text-[#0b193c] dark:text-blue-400">{sub.subjectCode}</td>
-                  <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">{sub.subjectName}</td>
-                  <td className="p-3.5 text-slate-600 dark:text-slate-300">
-                    <div className="flex items-center gap-2">
-                      <img src={sub.facultyAvatar} alt={sub.facultyName} className="h-6 w-6 rounded-full object-cover shrink-0" />
-                      <span>{sub.facultyName}</span>
-                    </div>
-                  </td>
-                  <td className="p-3.5 font-mono text-slate-500">{sub.credits}</td>
-                  <td className="p-3.5 font-mono font-semibold text-slate-800 dark:text-slate-200">{sub.conducted}</td>
-                  <td className="p-3.5 font-mono font-bold text-emerald-600">{sub.attended}</td>
-                  <td className="p-3.5 font-mono font-bold text-red-500">{sub.absent}</td>
-                  <td className="p-3.5 font-mono text-amber-600">{sub.leave}</td>
-                  <td className="p-3.5 font-mono font-extrabold text-sm">
-                    <span className={sub.attendancePct >= 85 ? "text-emerald-600" : sub.attendancePct >= 75 ? "text-amber-500" : "text-red-600"}>
-                      {sub.attendancePct}%
-                    </span>
-                  </td>
-                  <td className="p-3.5">
-                    <Badge
-                      className={
-                        sub.status === "Above 85%"
-                          ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                          : sub.status === "75-85%"
-                          ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
-                          : "bg-red-500/10 text-red-600 border-red-500/20"
-                      }
-                    >
-                      {sub.status}
-                    </Badge>
-                  </td>
-                  <td className="p-3.5 font-mono font-semibold text-slate-700 dark:text-slate-300">
-                    {sub.classesNeeded75 > 0 ? (
-                      <span className="text-red-600 font-bold">{sub.classesNeeded75} Classes</span>
-                    ) : (
-                      <span className="text-emerald-600">Achieved ✓</span>
-                    )}
+              {paginatedSubjects.length > 0 ? (
+                paginatedSubjects.map((sub) => (
+                  <tr
+                    key={sub.id}
+                    onClick={() => onSelectSubject(sub)}
+                    className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 cursor-pointer transition-colors"
+                  >
+                    <td className="p-3.5 font-mono font-bold text-[#0b193c] dark:text-blue-400">{sub.subjectCode}</td>
+                    <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">{sub.subjectName}</td>
+                    <td className="p-3.5 text-slate-600 dark:text-slate-300">
+                      <div className="flex items-center gap-2">
+                        {sub.facultyAvatar ? (
+                          <img src={sub.facultyAvatar} alt={sub.facultyName} className="h-6 w-6 rounded-full object-cover shrink-0" />
+                        ) : (
+                          <div className="h-6 w-6 rounded-full bg-[#0b193c]/10 text-[#0b193c] dark:text-blue-400 flex items-center justify-center font-bold text-[10px] shrink-0">
+                            {sub.facultyName ? sub.facultyName.charAt(0).toUpperCase() : "F"}
+                          </div>
+                        )}
+                        <span className="truncate max-w-[140px]">{sub.facultyName}</span>
+                      </div>
+                    </td>
+                    <td className="p-3.5 font-mono font-semibold text-slate-800 dark:text-slate-200">{sub.conducted}</td>
+                    <td className="p-3.5 font-mono font-bold text-emerald-600">{sub.present ?? sub.attended}</td>
+                    <td className="p-3.5 font-mono font-bold text-red-500">{sub.absent}</td>
+                    <td className="p-3.5 font-mono text-amber-600 font-semibold">{sub.late ?? 0}</td>
+                    <td className="p-3.5 font-mono font-extrabold text-sm">
+                      <span className={sub.attendancePct >= 85 ? "text-emerald-600" : sub.attendancePct >= 75 ? "text-amber-500" : "text-red-600"}>
+                        {sub.attendancePct}%
+                      </span>
+                    </td>
+                    <td className="p-3.5">
+                      <Badge
+                        className={
+                          sub.status === "Above 85%"
+                            ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                            : sub.status === "75-85%"
+                            ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                            : "bg-red-500/10 text-red-600 border-red-500/20"
+                        }
+                      >
+                        {sub.status === "Above 85%" ? "GOOD / ELIGIBLE" : sub.status === "75-85%" ? "WARNING" : "LOW ATTENDANCE"}
+                      </Badge>
+                    </td>
+                    <td className="p-3.5 font-mono font-semibold text-slate-700 dark:text-slate-300">
+                      {sub.classesNeeded75 > 0 ? (
+                        <span className="text-red-600 font-bold">{sub.classesNeeded75} Classes</span>
+                      ) : (
+                        <span className="text-emerald-600">Achieved ✓</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={10} className="p-8 text-center text-slate-500 font-medium">
+                    No attendance records available yet.
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
