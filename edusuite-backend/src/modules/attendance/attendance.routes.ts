@@ -931,18 +931,32 @@ router.post("/mark", authenticateToken, async (req: AuthenticatedRequest, res: R
 // ==========================================
 // 6. EXPORT ATTENDANCE LOG API
 // ==========================================
-router.get("/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+router.get(["/export", "/faculty/export"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const scope = await resolveDepartmentScope(req, res);
-    if (!scope.isAuthorized) return;
+    const authUserId = req.userId;
+    const authRole = (req.userRole || "").toLowerCase();
+
+    if (!authUserId) {
+      return res.status(401).json({ error: "Unauthorized." });
+    }
 
     const timeframe = (req.query.timeframe as string) || "all";
     const searchQuery = (req.query.search as string || "").trim();
 
     const where: any = {};
 
-    if (scope.department) {
-      where.user = { department: { contains: scope.department, mode: "insensitive" as const } };
+    // Strict security: if requester is faculty, restrict ONLY to sessions taught by them
+    if (authRole === "faculty") {
+      where.OR = [
+        { facultyId: authUserId },
+        { timetable: { facultyId: authUserId } },
+      ];
+    } else {
+      const scope = await resolveDepartmentScope(req, res);
+      if (!scope.isAuthorized) return;
+      if (scope.department) {
+        where.user = { department: { contains: scope.department, mode: "insensitive" as const } };
+      }
     }
 
     if (timeframe && timeframe !== "all") {
@@ -951,43 +965,62 @@ router.get("/export", authenticateToken, async (req: AuthenticatedRequest, res: 
     }
 
     if (searchQuery) {
-      where.OR = [
+      const searchCondition = [
         { user: { name: { contains: searchQuery, mode: "insensitive" as const } } },
         { user: { rollNumber: { contains: searchQuery, mode: "insensitive" as const } } },
       ];
+      if (where.OR && authRole === "faculty") {
+        where.AND = [
+          { OR: where.OR },
+          { OR: searchCondition },
+        ];
+        delete where.OR;
+      } else {
+        where.OR = searchCondition;
+      }
     }
 
     const records = await prisma.attendanceRecord.findMany({
       where,
       include: {
         user: true,
+        course: true,
+        faculty: true,
         timetable: { include: { course: true, faculty: true } },
       },
       orderBy: { date: "desc" },
-      take: 500,
+      take: 1000,
     });
 
     await auditLog(
       req,
       "ATTENDANCE_EXPORTED",
-      "Attendance & Biometrics",
+      "Attendance",
       "AttendanceRecord",
-      scope.department || "All Departments"
+      authRole === "faculty" ? `Faculty:${authUserId}` : "Exported Data"
     );
 
     const exportData = records.map((r) => ({
-      ID: r.id,
-      RollNumber: r.user?.rollNumber || "",
-      StudentName: r.user?.name || "",
-      Department: r.user?.department || "",
-      Semester: r.user?.semester || "",
       Date: r.date,
+      Subject: r.timetable?.course?.name || r.course?.name || "Subject",
+      CourseCode: r.timetable?.course?.code || r.course?.code || "",
+      Section: r.timetable?.section || r.user?.section || "A",
       Period: r.periodNumber || 1,
+      Student: r.user?.name || "",
+      RollNumber: r.user?.rollNumber || "",
       Status: r.status,
-      CourseCode: r.timetable?.course?.code || "",
-      CourseName: r.timetable?.course?.name || "",
-      FacultyName: r.timetable?.faculty?.name || "",
     }));
+
+    if (req.query.format === "csv" || req.headers["accept"] === "text/csv") {
+      const csvHeader = "Date,Subject,CourseCode,Section,Period,Student,Roll Number,Status";
+      const csvRows = exportData.map((row) =>
+        `"${row.Date}","${row.Subject.replace(/"/g, '""')}","${row.CourseCode}","${row.Section}","${row.Period}","${row.Student.replace(/"/g, '""')}","${row.RollNumber}","${row.Status}"`
+      );
+      const csvOutput = [csvHeader, ...csvRows].join("\n");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="faculty_attendance_${new Date().toISOString().split("T")[0]}.csv"`);
+      return res.send(csvOutput);
+    }
 
     return res.json(exportData);
   } catch (error: any) {
@@ -1102,13 +1135,13 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
     const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     const targetDay = dayNames[targetDateObj.getDay()] || "Friday";
 
-    // Query faculty timetable sessions for that day
+    // Query faculty timetable sessions for that day and academic year
     const timetableSlots = await prisma.masterTimetable.findMany({
       where: {
         facultyId: faculty.id,
         day: targetDay,
       },
-      include: { course: true },
+      include: { course: true, faculty: true },
       orderBy: { periodNumber: "asc" },
     });
 
@@ -1140,13 +1173,15 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       const classCode = `${slot.branch}-${slot.semester}${cleanSec}`;
       const stats = recordsByTimetable.get(slot.id);
       const isSubmitted = Boolean(stats && stats.total > 0);
-
-      const status = isSubmitted ? "Completed" : "Pending";
+      const status = isSubmitted ? "ATTENDANCE SUBMITTED" : "UPCOMING";
 
       return {
         id: slot.id,
         timetableId: slot.id,
         periodNumber: slot.periodNumber,
+        period: slot.periodNumber,
+        startTime: slot.startTime || "09:00 AM",
+        endTime: slot.endTime || "10:00 AM",
         time: `${slot.startTime || "09:00 AM"} - ${slot.endTime || "10:00 AM"}`,
         subject: `${slot.course?.code || "SUB"} - ${slot.course?.name || "Subject"}`,
         subjectCode: slot.course?.code || "SUB",
@@ -1158,8 +1193,12 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
         semester: slot.semester,
         room: slot.roomNo || "Room 101",
         isLab: slot.isLab,
+        classType: slot.isLab ? "Lab" : "Theory",
+        academicYear: slot.academicYear || "2026-27",
+        facultyName: slot.faculty?.name || faculty?.name || "Faculty",
         status,
         attendanceSubmitted: isSubmitted,
+        attendanceMarked: isSubmitted,
         submittedStats: stats ? {
           present: stats.present,
           absent: stats.absent,
@@ -1169,14 +1208,14 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       };
     });
 
-    // Compute top summary metrics
+    // Compute top summary metrics strictly from real PostgreSQL data
     const allFacultyTimetables = await prisma.masterTimetable.findMany({
       where: { facultyId: faculty.id },
       select: { id: true },
     });
     const allTTIds = allFacultyTimetables.map((t) => t.id);
 
-    const [totalConductedAgg, todayPresentCount, todayAbsentCount] = await Promise.all([
+    const [totalConductedAgg, todayPresentCount, todayAbsentCount, pendingLeavesCount] = await Promise.all([
       prisma.attendanceRecord.groupBy({
         by: ["timetableId", "date", "periodNumber"],
         where: { timetableId: { in: allTTIds } },
@@ -1195,6 +1234,12 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
           status: "Absent",
         },
       }),
+      prisma.facultyLeave.count({
+        where: {
+          facultyId: faculty.id,
+          status: { in: ["SUBMITTED", "HOD_REVIEW", "PENDING", "Pending"] },
+        },
+      }),
     ]);
 
     const totalConducted = totalConductedAgg.length;
@@ -1207,7 +1252,7 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
     const facultyPresentCount = totalFacultyRecords.filter((r) => r.status === "Present" || r.status === "Late").length;
     const averageAttendance = totalFacultyRecords.length > 0
       ? Math.round((facultyPresentCount / totalFacultyRecords.length) * 100)
-      : 85;
+      : 0;
 
     const stats = {
       conducted: totalConducted,
@@ -1215,7 +1260,7 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       presentToday: todayPresentCount,
       absentToday: todayAbsentCount,
       average: averageAttendance,
-      leavesPending: 0,
+      leavesPending: pendingLeavesCount,
     };
 
     return res.json({
@@ -1299,6 +1344,7 @@ router.get("/faculty/session/:timetableId/roster", authenticateToken, async (req
 
     const roster = students.map((s) => ({
       id: s.id,
+      studentId: s.id,
       rollNumber: s.rollNumber,
       name: s.name,
       department: s.department,
@@ -1315,13 +1361,26 @@ router.get("/faculty/session/:timetableId/roster", authenticateToken, async (req
         courseId: timetable.courseId,
         subjectCode: timetable.course?.code || "SUB",
         subjectName: timetable.course?.name || "Subject",
+        subject: `${timetable.course?.code || "SUB"} - ${timetable.course?.name || "Subject"}`,
+        courseCode: timetable.course?.code || "SUB",
+        courseName: timetable.course?.name || "Subject",
+        faculty: timetable.faculty?.name || "Faculty",
+        facultyName: timetable.faculty?.name || "Faculty",
+        department: timetable.branch,
+        branch: timetable.branch,
         section: `${timetable.branch} Sec ${cleanSec}`,
         cleanSection: cleanSec,
+        academicYear: timetable.academicYear || "2026-27",
+        semester: timetable.semester,
         periodNumber: timetable.periodNumber,
+        period: timetable.periodNumber,
+        startTime: timetable.startTime || "09:00 AM",
+        endTime: timetable.endTime || "10:00 AM",
         time: `${timetable.startTime || "09:00 AM"} - ${timetable.endTime || "10:00 AM"}`,
         room: timetable.roomNo || "Room 101",
+        isLab: timetable.isLab,
+        classType: timetable.isLab ? "Lab" : "Theory",
         date,
-        facultyName: timetable.faculty?.name || "Faculty",
         isAlreadySubmitted: existingRecords.length > 0,
       },
       students: roster,
@@ -1379,13 +1438,24 @@ router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req:
       });
     }
 
+    // Validate attendance statuses
+    const validStatuses = new Set(["Present", "Absent", "Late"]);
+    for (const r of records) {
+      if (!r.status || !validStatuses.has(r.status)) {
+        return res.status(400).json({
+          error: `Validation failed: Invalid attendance status '${r.status}'. Status must be 'Present', 'Absent', or 'Late'.`,
+        });
+      }
+    }
+
     // Student roster validation: verify every student belongs to the authorized roster
     const roster = await resolveAuthorizedSessionRoster(timetable);
     const authorizedIds = new Set(roster.map((s) => s.id));
     for (const r of records) {
-      if (!authorizedIds.has(r.studentId)) {
+      const sId = r.studentId || r.id;
+      if (!sId || !authorizedIds.has(sId)) {
         return res.status(400).json({
-          error: `Validation failed: Student with ID ${r.studentId} is not enrolled in this session (${timetable.branch} ${timetable.section} Sem ${timetable.semester}). Entire transaction rolled back.`,
+          error: `Validation failed: Student with ID ${sId} is not enrolled in this session (${timetable.branch} ${timetable.section} Sem ${timetable.semester}). Entire transaction rolled back.`,
         });
       }
     }
@@ -1394,37 +1464,64 @@ router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req:
     const courseId = timetable.courseId || undefined;
     const markingFacultyId = (authRole === "faculty" || authRole === "hod") ? authUserId : (timetable.facultyId || undefined);
 
-    // Execute atomic transaction
-    const results = await prisma.$transaction(
-      records.map((r: { studentId: string; status: string; remarks?: string }) =>
-        prisma.attendanceRecord.upsert({
-          where: {
-            userId_date_periodNumber: {
-              userId: r.studentId,
+    // Check if session has existing attendance on this date
+    const existingCount = await prisma.attendanceRecord.count({
+      where: {
+        timetableId: timetable.id,
+        date,
+        periodNumber: period,
+      },
+    });
+    const isAlreadySubmitted = existingCount > 0;
+
+    // Execute atomic PostgreSQL transaction
+    const results = await prisma.$transaction(async (tx) => {
+      // 1. Upsert all attendance records
+      const upserted = await Promise.all(
+        records.map((r: { studentId?: string; id?: string; status: string; remarks?: string }) => {
+          const sId = r.studentId || r.id;
+          return tx.attendanceRecord.upsert({
+            where: {
+              userId_date_periodNumber: {
+                userId: sId!,
+                date,
+                periodNumber: period,
+              },
+            },
+            update: {
+              status: r.status,
+              timetableId: timetable.id,
+              ...(courseId && { courseId }),
+              ...(markingFacultyId && { facultyId: markingFacultyId }),
+              ...(r.remarks && { remarks: r.remarks }),
+            },
+            create: {
+              userId: sId!,
               date,
               periodNumber: period,
+              status: r.status,
+              timetableId: timetable.id,
+              ...(courseId && { courseId }),
+              ...(markingFacultyId && { facultyId: markingFacultyId }),
+              ...(r.remarks && { remarks: r.remarks }),
             },
-          },
-          update: {
-            status: r.status,
-            timetableId: timetable.id,
-            ...(courseId && { courseId }),
-            ...(markingFacultyId && { facultyId: markingFacultyId }),
-            ...(r.remarks && { remarks: r.remarks }),
-          },
-          create: {
-            userId: r.studentId,
-            date,
-            periodNumber: period,
-            status: r.status,
-            timetableId: timetable.id,
-            ...(courseId && { courseId }),
-            ...(markingFacultyId && { facultyId: markingFacultyId }),
-            ...(r.remarks && { remarks: r.remarks }),
-          },
+          });
         })
-      )
-    );
+      );
+
+      // 2. Dispatch notifications to students
+      const subjectLabel = timetable.course?.name || timetable.course?.code || "Class Session";
+      await tx.notification.createMany({
+        data: records.map((r: { studentId: string; status: string }) => ({
+          studentId: r.studentId,
+          title: "Attendance Posted",
+          message: `Attendance posted for ${subjectLabel} on ${date} (Period ${period}). Status: ${r.status}.`,
+          type: "ATTENDANCE",
+        })),
+      });
+
+      return upserted;
+    });
 
     const presentCount = records.filter((r: any) => r.status === "Present").length;
     const absentCount = records.filter((r: any) => r.status === "Absent").length;
@@ -1432,7 +1529,7 @@ router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req:
 
     await auditLog(
       req,
-      "FACULTY_ATTENDANCE_SUBMITTED",
+      isAlreadySubmitted ? "ATTENDANCE_EDITED" : "ATTENDANCE_SUBMITTED",
       "Attendance",
       "AttendanceRecord",
       `${timetable.id}:${date}:P${period}`
@@ -1445,6 +1542,7 @@ router.post("/faculty/session/:timetableId/mark", authenticateToken, async (req:
       presentCount,
       absentCount,
       lateCount,
+      isAlreadySubmitted,
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
@@ -1479,15 +1577,30 @@ router.get("/faculty/register", authenticateToken, async (req: AuthenticatedRequ
       return res.status(403).json({ error: "Faculty profile not found." });
     }
 
+    const { subject, section, date: dateFilter, status: statusFilter } = req.query as Record<string, string>;
+
+    const whereTimetable: any = { facultyId: faculty.id };
+    if (subject && subject !== "ALL") {
+      whereTimetable.OR = [
+        { courseId: subject },
+        { course: { code: subject } },
+        { course: { name: { contains: subject, mode: "insensitive" as const } } },
+      ];
+    }
+    if (section && section !== "ALL") {
+      const cleanSec = section.replace(/^Section\s+/i, "").trim().toUpperCase();
+      whereTimetable.section = { in: [cleanSec, `Section ${cleanSec}`] };
+    }
+
     const timetables = await prisma.masterTimetable.findMany({
-      where: { facultyId: faculty.id },
+      where: whereTimetable,
       include: { course: true },
     });
 
     const cohortConditions = timetables.map((t) => {
       const cleanSec = (t.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
       return {
-        department: { equals: t.branch, mode: "insensitive" as const },
+        department: { in: getMatchingDepartments(t.branch), mode: "insensitive" as const },
         semester: t.semester,
         section: { in: [cleanSec, `Section ${cleanSec}`] },
       };
@@ -1504,16 +1617,21 @@ router.get("/faculty/register", authenticateToken, async (req: AuthenticatedRequ
     });
 
     const studentIds = students.map((s) => s.id);
+    const whereRecords: any = { userId: { in: studentIds } };
+    if (dateFilter) {
+      whereRecords.date = dateFilter;
+    }
+
     const records = await prisma.attendanceRecord.findMany({
-      where: { userId: { in: studentIds } },
+      where: whereRecords,
       orderBy: { date: "desc" },
     });
 
-    const register = students.map((s) => {
+    let register = students.map((s) => {
       const sRecords = records.filter((r) => r.userId === s.id);
       const total = sRecords.length;
       const present = sRecords.filter((r) => r.status === "Present" || r.status === "Late").length;
-      const percentage = total > 0 ? Math.round((present / total) * 100) : 85;
+      const percentage = total > 0 ? Math.round((present / total) * 100) : 100;
 
       return {
         id: s.id,
@@ -1529,6 +1647,10 @@ router.get("/faculty/register", authenticateToken, async (req: AuthenticatedRequ
       };
     });
 
+    if (statusFilter && statusFilter !== "ALL") {
+      register = register.filter((s) => s.status.toLowerCase() === statusFilter.toLowerCase());
+    }
+
     return res.json(register);
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
@@ -1536,7 +1658,123 @@ router.get("/faculty/register", authenticateToken, async (req: AuthenticatedRequ
 });
 
 // ==========================================
-// 12. FACULTY ATTENDANCE ANALYTICS
+// 12. FACULTY ATTENDANCE HISTORY LOG
+// ==========================================
+router.get("/faculty/history", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    const authRole = (req.userRole || "").toLowerCase();
+
+    if (!authUserId) {
+      return res.status(401).json({ error: "Unauthorized." });
+    }
+
+    let faculty = await prisma.faculty.findUnique({
+      where: { id: authUserId },
+      select: { id: true, name: true, department: true },
+    });
+
+    if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
+      faculty = await prisma.faculty.findFirst({
+        where: { email: "faculty@cms.com" },
+        select: { id: true, name: true, department: true },
+      });
+    }
+
+    if (!faculty) {
+      return res.status(403).json({ error: "Faculty profile not found." });
+    }
+
+    const facultyTimetables = await prisma.masterTimetable.findMany({
+      where: { facultyId: faculty.id },
+      select: { id: true },
+    });
+    const ttIds = facultyTimetables.map((t) => t.id);
+
+    const records = await prisma.attendanceRecord.findMany({
+      where: {
+        OR: [
+          { facultyId: faculty.id },
+          { timetableId: { in: ttIds } },
+        ],
+      },
+      include: {
+        timetable: { include: { course: true } },
+        course: true,
+      },
+      orderBy: [{ date: "desc" }, { periodNumber: "desc" }],
+    });
+
+    // Group by (timetableId, date, periodNumber)
+    const sessionMap = new Map<string, {
+      id: string;
+      timetableId: string;
+      date: string;
+      periodNumber: number;
+      period: number;
+      subject: string;
+      subjectCode: string;
+      subjectName: string;
+      section: string;
+      time: string;
+      room: string;
+      present: number;
+      absent: number;
+      late: number;
+      total: number;
+      submittedTime: string;
+    }>();
+
+    for (const r of records) {
+      const ttId = r.timetableId || "no-tt";
+      const pNum = r.periodNumber || 1;
+      const key = `${ttId}_${r.date}_${pNum}`;
+
+      if (!sessionMap.has(key)) {
+        const cName = r.timetable?.course?.name || r.course?.name || "Subject";
+        const cCode = r.timetable?.course?.code || r.course?.code || "SUB";
+        const cleanSec = (r.timetable?.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+
+        sessionMap.set(key, {
+          id: key,
+          timetableId: r.timetableId || "",
+          date: r.date,
+          periodNumber: pNum,
+          period: pNum,
+          subject: `${cCode} - ${cName}`,
+          subjectCode: cCode,
+          subjectName: cName,
+          section: r.timetable?.branch ? `${r.timetable.branch} Sec ${cleanSec}` : cleanSec,
+          time: r.timetable?.startTime ? `${r.timetable.startTime} - ${r.timetable.endTime}` : "Scheduled",
+          room: r.timetable?.roomNo || "Room 101",
+          present: 0,
+          absent: 0,
+          late: 0,
+          total: 0,
+          submittedTime: new Date(r.updatedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+        });
+      }
+
+      const item = sessionMap.get(key)!;
+      item.total += 1;
+      if (r.status === "Present") item.present += 1;
+      else if (r.status === "Absent") item.absent += 1;
+      else if (r.status === "Late") item.late += 1;
+    }
+
+    const history = Array.from(sessionMap.values()).sort((a, b) => {
+      if (a.date !== b.date) return b.date.localeCompare(a.date);
+      return b.periodNumber - a.periodNumber;
+    });
+
+    return res.json(history);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// 13. FACULTY ATTENDANCE ANALYTICS (REAL POSTGRESQL DATA)
 // ==========================================
 router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -1570,31 +1808,145 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
     const ttIds = timetables.map((t) => t.id);
 
     const records = await prisma.attendanceRecord.findMany({
-      where: { timetableId: { in: ttIds } },
+      where: {
+        OR: [
+          { facultyId: faculty.id },
+          { timetableId: { in: ttIds } },
+        ],
+      },
+      include: {
+        user: true,
+        course: true,
+        timetable: { include: { course: true } },
+      },
+      orderBy: { date: "asc" },
     });
 
     const total = records.length;
+    if (total === 0) {
+      return res.json({
+        hasData: false,
+        totalRecords: 0,
+        distributionData: [],
+        trendData: [],
+        subjectWise: [],
+        sectionWise: [],
+        lowAttendanceStudents: [],
+        repeatedAbsences: [],
+      });
+    }
+
     const present = records.filter((r) => r.status === "Present").length;
     const absent = records.filter((r) => r.status === "Absent").length;
     const late = records.filter((r) => r.status === "Late").length;
 
     const distributionData = [
-      { name: "Present", value: total > 0 ? Math.round((present / total) * 100) : 85 },
-      { name: "Absent", value: total > 0 ? Math.round((absent / total) * 100) : 10 },
-      { name: "Late", value: total > 0 ? Math.round((late / total) * 100) : 5 },
+      { name: "Present", value: Math.round((present / total) * 100), count: present },
+      { name: "Absent", value: Math.round((absent / total) * 100), count: absent },
+      { name: "Late", value: Math.round((late / total) * 100), count: late },
     ];
 
-    const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const trendData = days.map((day) => ({
-      day,
-      attendance: 88 + Math.floor(Math.sin(day.charCodeAt(0)) * 6),
+    // Compute real trend by date
+    const dateMap = new Map<string, { total: number; attended: number }>();
+    for (const r of records) {
+      if (!dateMap.has(r.date)) {
+        dateMap.set(r.date, { total: 0, attended: 0 });
+      }
+      const d = dateMap.get(r.date)!;
+      d.total += 1;
+      if (r.status === "Present" || r.status === "Late") d.attended += 1;
+    }
+
+    const trendData = Array.from(dateMap.entries()).map(([date, counts]) => {
+      const dObj = new Date(date);
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const dayLabel = dayNames[dObj.getDay()] || date;
+      return {
+        date,
+        day: `${dayLabel} (${date.slice(5)})`,
+        attendance: Math.round((counts.attended / counts.total) * 100),
+      };
+    });
+
+    // Subject-wise attendance
+    const subjectMap = new Map<string, { name: string; code: string; total: number; attended: number }>();
+    for (const r of records) {
+      const code = r.timetable?.course?.code || r.course?.code || "SUB";
+      const name = r.timetable?.course?.name || r.course?.name || "Subject";
+      if (!subjectMap.has(code)) {
+        subjectMap.set(code, { name, code, total: 0, attended: 0 });
+      }
+      const s = subjectMap.get(code)!;
+      s.total += 1;
+      if (r.status === "Present" || r.status === "Late") s.attended += 1;
+    }
+
+    const subjectWise = Array.from(subjectMap.values()).map((s) => ({
+      code: s.code,
+      name: s.name,
+      total: s.total,
+      attended: s.attended,
+      percentage: Math.round((s.attended / s.total) * 100),
     }));
 
+    // Low attendance students (< 75%)
+    const studentStats = new Map<string, {
+      studentId: string;
+      name: string;
+      rollNumber: string;
+      section: string;
+      subject: string;
+      total: number;
+      attended: number;
+      absent: number;
+    }>();
+
+    for (const r of records) {
+      if (!r.user) continue;
+      const sId = r.user.id;
+      if (!studentStats.has(sId)) {
+        studentStats.set(sId, {
+          studentId: sId,
+          name: r.user.name,
+          rollNumber: r.user.rollNumber,
+          section: r.user.section || "A",
+          subject: r.timetable?.course?.name || r.course?.name || "Subject",
+          total: 0,
+          attended: 0,
+          absent: 0,
+        });
+      }
+      const st = studentStats.get(sId)!;
+      st.total += 1;
+      if (r.status === "Present" || r.status === "Late") st.attended += 1;
+      else if (r.status === "Absent") st.absent += 1;
+    }
+
+    const lowAttendanceStudents = Array.from(studentStats.values())
+      .map((st) => ({
+        ...st,
+        attendancePct: Math.round((st.attended / st.total) * 100),
+        threshold: 75,
+        status: "Shortage Alert",
+      }))
+      .filter((st) => st.attendancePct < 75);
+
+    const repeatedAbsences = Array.from(studentStats.values())
+      .filter((st) => st.absent >= 2)
+      .map((st) => ({
+        ...st,
+        attendancePct: Math.round((st.attended / st.total) * 100),
+        consecutiveAbsences: st.absent,
+      }));
+
     return res.json({
-      hasData: total > 0,
+      hasData: true,
       totalRecords: total,
       distributionData,
       trendData,
+      subjectWise,
+      lowAttendanceStudents,
+      repeatedAbsences,
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
@@ -1602,7 +1954,7 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
 });
 
 // ==========================================
-// 13. AUTHENTICATED STUDENT PORTAL ATTENDANCE
+// 14. AUTHENTICATED STUDENT PORTAL ATTENDANCE
 // ==========================================
 router.get(["/student/my-attendance", "/student"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -1616,6 +1968,8 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       include: {
         attendanceRecords: {
           include: {
+            course: true,
+            faculty: true,
             timetable: {
               include: { course: true, faculty: true },
             },
@@ -1638,7 +1992,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
 
     const overallAttendancePct = totalConducted > 0
       ? Number(((presentClasses / totalConducted) * 100).toFixed(1))
-      : 88.0;
+      : 0.0;
 
     // Group by course/subject
     const courseMap = new Map<string, {
@@ -1655,15 +2009,15 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
     }>();
 
     for (const r of records) {
-      const course = r.timetable?.course;
-      const courseKey = course?.code || r.courseId || "CS501";
-      const courseName = course?.name || "Department Course";
-      const facultyName = r.timetable?.faculty?.name || "Dr. Ravi Kumar";
-      const credits = course?.credits || 4;
+      const courseObj = r.timetable?.course || r.course;
+      const courseKey = courseObj?.code || r.courseId || "SUB";
+      const courseName = courseObj?.name || "Department Course";
+      const facultyName = r.timetable?.faculty?.name || r.faculty?.name || "Course Faculty";
+      const credits = courseObj?.credits || 4;
 
       if (!courseMap.has(courseKey)) {
         courseMap.set(courseKey, {
-          courseId: course?.id || courseKey,
+          courseId: courseObj?.id || courseKey,
           code: courseKey,
           name: courseName,
           credits,
@@ -1690,11 +2044,12 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         id: r.id,
         date: r.date,
         period: `Period ${r.periodNumber || 1}`,
-        timeSlot: `${r.timetable?.startTime || "09:00 AM"} - ${r.timetable?.endTime || "10:00 AM"}`,
+        periodNumber: r.periodNumber || 1,
+        timeSlot: r.timetable ? `${r.timetable.startTime || "09:00 AM"} - ${r.timetable.endTime || "10:00 AM"}` : "Scheduled Session",
         subjectCode: courseKey,
         subjectName: courseName,
         facultyName,
-        room: r.timetable?.roomNo || "LH-301",
+        room: r.timetable?.roomNo || "Room 101",
         status: r.status,
         mode: "Manual",
         remarks: r.remarks || "Regular Session",
@@ -1702,7 +2057,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
     }
 
     const displayedSubjects = Array.from(courseMap.values()).map((c) => {
-      const pct = c.conducted > 0 ? Number(((c.attended / c.conducted) * 100).toFixed(1)) : 85.0;
+      const pct = c.conducted > 0 ? Number(((c.attended / c.conducted) * 100).toFixed(1)) : 0.0;
       const status = pct >= 85 ? "Above 85%" : pct >= 75 ? "75-85%" : "Below 75%";
       return {
         id: c.courseId,
@@ -1711,7 +2066,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         subjectCode: c.code,
         subjectName: c.name,
         facultyName: c.facultyName,
-        facultyDesignation: "Assistant Professor",
+        facultyDesignation: "Faculty Member",
         facultyEmail: "faculty@cms.com",
         facultyAvatar: "",
         credits: c.credits,
@@ -1741,8 +2096,8 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       };
     });
 
-    const historyLogs = records.slice(0, 50).map((r) => {
-      const course = r.timetable?.course;
+    const historyLogs = records.slice(0, 100).map((r) => {
+      const courseObj = r.timetable?.course || r.course;
       const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
       const dObj = new Date(r.date);
       const dayStr = dayNames[dObj.getDay()] || "Day";
@@ -1752,11 +2107,12 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         date: r.date,
         day: dayStr,
         period: `Period ${r.periodNumber || 1}`,
-        timeSlot: `${r.timetable?.startTime || "09:00 AM"} - ${r.timetable?.endTime || "10:00 AM"}`,
-        subjectCode: course?.code || r.courseId || "CS501",
-        subjectName: course?.name || "Department Course",
-        facultyName: r.timetable?.faculty?.name || "Dr. Ravi Kumar",
-        room: r.timetable?.roomNo || "LH-301",
+        periodNumber: r.periodNumber || 1,
+        timeSlot: r.timetable ? `${r.timetable.startTime || "09:00 AM"} - ${r.timetable.endTime || "10:00 AM"}` : "Scheduled Session",
+        subjectCode: courseObj?.code || r.courseId || "SUB",
+        subjectName: courseObj?.name || "Department Course",
+        facultyName: r.timetable?.faculty?.name || r.faculty?.name || "Faculty",
+        room: r.timetable?.roomNo || "Room 101",
         status: r.status as "Present" | "Absent" | "Medical Leave" | "On Duty" | "Holiday",
         mode: "Manual" as const,
         remarks: r.remarks || "Regular Session Attendance",
@@ -1766,7 +2122,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
     const targetDateStr = new Date().toISOString().split("T")[0];
     const todayRecords = records.filter((r) => r.date === targetDateStr);
     const todayStatus = todayRecords.length > 0
-      ? (todayRecords.some((r) => r.status === "Present") ? "Present" : "Absent font-bold")
+      ? (todayRecords.some((r) => r.status === "Present") ? "Present" : "Absent")
       : "Pending";
 
     const profile = {
@@ -1795,8 +2151,10 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       profile,
       subjects: displayedSubjects,
       history: historyLogs,
+      records: historyLogs,
       stats: {
         overallAttendancePct,
+        overallPercentage: overallAttendancePct,
         presentClasses,
         absentClasses,
         totalConducted,

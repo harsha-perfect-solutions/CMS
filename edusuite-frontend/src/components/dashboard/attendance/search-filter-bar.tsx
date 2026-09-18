@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import api from "@/lib/api";
 
 interface SearchFilterBarProps {
   searchQuery: string;
@@ -16,6 +17,7 @@ interface SearchFilterBarProps {
   subjectsList?: string[];
   sectionsList?: string[];
   onRefresh: () => void;
+  onExport?: () => void;
 }
 
 export function SearchFilterBar({
@@ -30,11 +32,46 @@ export function SearchFilterBar({
   subjectsList,
   sectionsList,
   onRefresh,
+  onExport,
 }: SearchFilterBarProps) {
-  const handleExport = () => {
-    toast.success("Exporting register data...", {
-      description: "Excel workbook download started.",
-    });
+  const handleExport = async () => {
+    if (onExport) {
+      onExport();
+      return;
+    }
+    try {
+      toast.info("Generating attendance export from PostgreSQL...");
+      const res = await api.get("/api/attendance/faculty/export");
+      if (res.data && Array.isArray(res.data) && res.data.length > 0) {
+        const headers = ["Date", "Subject", "CourseCode", "Section", "Period", "Student", "RollNumber", "Status"];
+        const csvRows = [headers.join(",")];
+        for (const row of res.data) {
+          csvRows.push([
+            `"${row.Date || ""}"`,
+            `"${(row.Subject || "").replace(/"/g, '""')}"`,
+            `"${row.CourseCode || ""}"`,
+            `"${row.Section || ""}"`,
+            row.Period || 1,
+            `"${(row.Student || "").replace(/"/g, '""')}"`,
+            `"${row.RollNumber || ""}"`,
+            `"${row.Status || ""}"`,
+          ].join(","));
+        }
+        const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `faculty_attendance_${new Date().toISOString().split("T")[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success("Attendance export downloaded successfully.");
+      } else {
+        toast.warning("No attendance records found to export.");
+      }
+    } catch (err: any) {
+      toast.error("Failed to export attendance records.");
+    }
   };
 
   const rawSubjects = uniqueSubjects || subjectsList || [];

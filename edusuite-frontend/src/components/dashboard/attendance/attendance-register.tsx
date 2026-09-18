@@ -59,8 +59,9 @@ export function AttendanceRegister({ students = [], subject, section }: Attendan
           </TableHeader>
           <TableBody>
             {students.map((stud) => {
-              const pct = stud.percentage ?? 85;
-              const isShortage = pct < 75;
+              const hasRecords = (stud.totalClasses ?? 0) > 0;
+              const pct = stud.percentage ?? (hasRecords ? Math.round(((stud.attendedClasses || 0) / (stud.totalClasses || 1)) * 100) : 0);
+              const isShortage = hasRecords && pct < 75;
 
               return (
                 <TableRow key={stud.rollNumber} className="hover:bg-muted/20">
@@ -74,26 +75,28 @@ export function AttendanceRegister({ students = [], subject, section }: Attendan
                     {stud.section || "A"}
                   </TableCell>
                   <TableCell className="text-center font-mono">
-                    {stud.totalClasses ?? 12}
+                    {stud.totalClasses ?? 0}
                   </TableCell>
                   <TableCell className="text-center font-mono font-semibold text-foreground">
-                    {stud.attendedClasses ?? 10}
+                    {stud.attendedClasses ?? 0}
                   </TableCell>
                   <TableCell className="text-center font-mono font-extrabold">
-                    <span className={isShortage ? "text-rose-600" : "text-emerald-600"}>
-                      {pct}%
+                    <span className={!hasRecords ? "text-muted-foreground" : isShortage ? "text-rose-600" : "text-emerald-600"}>
+                      {!hasRecords ? "N/A" : `${pct}%`}
                     </span>
                   </TableCell>
                   <TableCell className="text-right">
                     <Badge
                       variant="outline"
                       className={`text-[0.62rem] font-bold ${
-                        isShortage
+                        !hasRecords
+                          ? "bg-muted/30 text-muted-foreground border-border/50"
+                          : isShortage
                           ? "bg-rose-500/10 text-rose-600 border-rose-500/20"
                           : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                       }`}
                     >
-                      {isShortage ? "Shortage Warning" : "Eligible"}
+                      {!hasRecords ? "No History" : isShortage ? "Shortage Warning" : "Eligible"}
                     </Badge>
                   </TableCell>
                 </TableRow>

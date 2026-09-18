@@ -11,6 +11,7 @@ import { StatisticsCards } from "@/components/dashboard/attendance/statistics-ca
 import { TodayClasses, type TodayClassItem } from "@/components/dashboard/attendance/today-classes";
 import { AttendanceForm, type AttendanceStudentItem } from "@/components/dashboard/attendance/attendance-form";
 import { AttendanceRegister, type RegisterStudentItem } from "@/components/dashboard/attendance/attendance-register";
+import { AttendanceHistory, type AttendanceHistorySessionItem } from "@/components/dashboard/attendance/attendance-history";
 import { AttendanceAnalytics } from "@/components/dashboard/attendance/attendance-analytics";
 import { SkeletonLoader } from "@/components/dashboard/attendance/skeleton-loader";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -57,16 +58,41 @@ function FacultyAttendancePage() {
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Register & Analytics data
+  // Register, History & Analytics data
   const [registerStudents, setRegisterStudents] = useState<RegisterStudentItem[]>([]);
+  const [historySessions, setHistorySessions] = useState<AttendanceHistorySessionItem[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [analyticsData, setAnalyticsData] = useState<{
     distributionData: { name: string; value: number }[];
     trendData: { day: string; attendance: number }[];
+    subjectWise?: { code: string; name: string; total: number; attended: number; percentage: number }[];
+    lowAttendanceStudents?: {
+      studentId: string;
+      name: string;
+      rollNumber: string;
+      section: string;
+      subject: string;
+      attendancePct: number;
+      threshold: number;
+      status: string;
+    }[];
+    repeatedAbsences?: {
+      studentId: string;
+      name: string;
+      rollNumber: string;
+      section: string;
+      subject: string;
+      consecutiveAbsences: number;
+      attendancePct: number;
+    }[];
     hasData: boolean;
     totalRecords: number;
   }>({
     distributionData: [],
     trendData: [],
+    subjectWise: [],
+    lowAttendanceStudents: [],
+    repeatedAbsences: [],
     hasData: true,
     totalRecords: 0,
   });
@@ -115,6 +141,21 @@ function FacultyAttendancePage() {
     }
   }, []);
 
+  // Fetch session submission history
+  const fetchHistoryData = useCallback(async () => {
+    try {
+      setLoadingHistory(true);
+      const res = await api.get("/api/attendance/faculty/history");
+      if (res.data && Array.isArray(res.data)) {
+        setHistorySessions(res.data);
+      }
+    } catch (err) {
+      console.error("Failed to load attendance history", err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
   // Fetch analytics data
   const fetchAnalyticsData = useCallback(async () => {
     try {
@@ -124,6 +165,9 @@ function FacultyAttendancePage() {
         setAnalyticsData({
           distributionData: res.data.distributionData || [],
           trendData: res.data.trendData || [],
+          subjectWise: res.data.subjectWise || [],
+          lowAttendanceStudents: res.data.lowAttendanceStudents || [],
+          repeatedAbsences: res.data.repeatedAbsences || [],
           hasData: res.data.hasData !== false,
           totalRecords: res.data.totalRecords || 0,
         });
@@ -138,13 +182,14 @@ function FacultyAttendancePage() {
   useEffect(() => {
     fetchTodayData();
     fetchRegisterData();
+    fetchHistoryData();
     fetchAnalyticsData();
-  }, [fetchTodayData, fetchRegisterData, fetchAnalyticsData]);
+  }, [fetchTodayData, fetchRegisterData, fetchHistoryData, fetchAnalyticsData]);
 
   const handleRefresh = async () => {
     setLoading(true);
     toast.info("Refreshing attendance data from PostgreSQL...");
-    await Promise.all([fetchTodayData(true), fetchRegisterData(), fetchAnalyticsData()]);
+    await Promise.all([fetchTodayData(true), fetchRegisterData(), fetchHistoryData(), fetchAnalyticsData()]);
     setLoading(false);
     toast.success("Attendance records synchronized.");
   };
@@ -230,7 +275,7 @@ function FacultyAttendancePage() {
 
         // Close form and refresh views
         setActiveFormSlot(null);
-        await Promise.all([fetchTodayData(true), fetchRegisterData(), fetchAnalyticsData()]);
+        await Promise.all([fetchTodayData(true), fetchRegisterData(), fetchHistoryData(), fetchAnalyticsData()]);
       } else {
         toast.error("Failed to submit attendance", {
           description: res.data?.error || "An error occurred during submission.",
@@ -323,6 +368,9 @@ function FacultyAttendancePage() {
             <TabsTrigger value="register" className="text-xs font-bold rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
               Student Attendance Register
             </TabsTrigger>
+            <TabsTrigger value="history" className="text-xs font-bold rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
+              Attendance History ({historySessions.length})
+            </TabsTrigger>
             <TabsTrigger value="analytics" className="text-xs font-bold rounded-lg data-[state=active]:bg-primary data-[state=active]:text-white">
               Attendance Analytics
             </TabsTrigger>
@@ -369,11 +417,22 @@ function FacultyAttendancePage() {
           />
         </TabsContent>
 
-        {/* Tab 3: Attendance Analytics */}
+        {/* Tab 3: Attendance History */}
+        <TabsContent value="history" className="space-y-6">
+          <AttendanceHistory
+            history={historySessions}
+            isLoading={loadingHistory}
+          />
+        </TabsContent>
+
+        {/* Tab 4: Attendance Analytics */}
         <TabsContent value="analytics" className="space-y-6">
           <AttendanceAnalytics
             distributionData={analyticsData.distributionData}
             trendData={analyticsData.trendData}
+            subjectWise={analyticsData.subjectWise}
+            lowAttendanceStudents={analyticsData.lowAttendanceStudents}
+            repeatedAbsences={analyticsData.repeatedAbsences}
             hasData={analyticsData.hasData}
             totalRecords={analyticsData.totalRecords}
             isLoading={loadingAnalytics}
