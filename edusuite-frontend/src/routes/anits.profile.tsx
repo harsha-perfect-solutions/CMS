@@ -71,7 +71,7 @@ function AnitsProfilePage() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      <div className="bg-card p-5 rounded-2xl border border-border/60 shadow-xs">
+      <div className="bg-card p-5 rounded-xl border border-border/60 shadow-xs">
         <h2 className="text-xl font-bold text-foreground">User Profile &amp; Security Settings</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
           ANITS authenticated user identity details and account password credentials.
@@ -80,7 +80,7 @@ function AnitsProfilePage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Profile Card */}
-        <Card className="rounded-2xl border-border/60 shadow-xs">
+        <Card className="rounded-xl border border-border/60 shadow-xs bg-card">
           <CardHeader className="p-5 border-b border-border/40 bg-muted/15">
             <CardTitle className="text-sm font-bold flex items-center gap-2">
               <User className="size-4 text-primary" /> Identity Credentials
@@ -119,7 +119,7 @@ function AnitsProfilePage() {
         </Card>
 
         {/* Change Password Card */}
-        <Card className="rounded-2xl border-border/60 shadow-xs">
+        <Card className="rounded-xl border border-border/60 shadow-xs bg-card">
           <CardHeader className="p-5 border-b border-border/40 bg-muted/15">
             <CardTitle className="text-sm font-bold flex items-center gap-2">
               <KeyRound className="size-4 text-primary" /> Update Password
@@ -134,7 +134,7 @@ function AnitsProfilePage() {
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
                   placeholder="Enter current password"
-                  className="h-9 text-xs rounded-xl"
+                  className="h-9 text-xs rounded-lg"
                   required
                 />
               </div>
@@ -146,7 +146,7 @@ function AnitsProfilePage() {
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Minimum 8 characters"
-                  className="h-9 text-xs rounded-xl"
+                  className="h-9 text-xs rounded-lg"
                   required
                 />
               </div>
@@ -158,7 +158,7 @@ function AnitsProfilePage() {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Repeat new password"
-                  className="h-9 text-xs rounded-xl"
+                  className="h-9 text-xs rounded-lg"
                   required
                 />
               </div>
@@ -166,7 +166,7 @@ function AnitsProfilePage() {
               <Button
                 type="submit"
                 disabled={isUpdating}
-                className="w-full h-9 rounded-xl text-xs font-bold uppercase tracking-wider mt-2"
+                className="w-full h-9 rounded-lg text-xs font-semibold uppercase tracking-wider mt-2 bg-blue-600 hover:bg-blue-700 text-white"
               >
                 {isUpdating ? "Updating..." : "Save Password"}
               </Button>

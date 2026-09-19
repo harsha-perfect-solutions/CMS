@@ -54,7 +54,7 @@ function AnitsReportsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-card p-5 rounded-2xl border border-border/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-card p-5 rounded-xl border border-border/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-foreground">Attendance &amp; Timetable Reports</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -66,7 +66,7 @@ function AnitsReportsPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* STUDENT REPORT */}
         {isStudent && (
-          <Card className="rounded-2xl border-border/60 shadow-xs">
+          <Card className="rounded-xl border-border/60 shadow-xs">
             <CardHeader className="p-5">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
@@ -86,12 +86,12 @@ function AnitsReportsPage() {
                 onClick={() =>
                   handleDownload(
                     "student_att",
-                    "http://localhost:5000/api/attendance/student/export?format=csv",
-                    "ANITS_Student_Attendance_Report.csv"
+                    "http://localhost:5000/api/attendance/export",
+                    "ANITS_My_Attendance_Ledger.csv"
                   )
                 }
                 disabled={downloading === "student_att"}
-                className="w-full rounded-xl text-xs font-semibold gap-2"
+                className="w-full rounded-lg text-xs font-semibold gap-2 bg-blue-600 hover:bg-blue-700 text-white"
               >
                 <Download className="size-4" /> Download CSV Ledger
               </Button>
@@ -101,7 +101,7 @@ function AnitsReportsPage() {
 
         {/* FACULTY REPORT */}
         {(isFaculty || isHod) && (
-          <Card className="rounded-2xl border-border/60 shadow-xs">
+          <Card className="rounded-xl border-border/60 shadow-xs">
             <CardHeader className="p-5">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-500">
@@ -126,7 +126,7 @@ function AnitsReportsPage() {
                   )
                 }
                 disabled={downloading === "faculty_att"}
-                className="w-full rounded-xl text-xs font-semibold gap-2"
+                className="w-full rounded-lg text-xs font-semibold gap-2 bg-blue-600 hover:bg-blue-700 text-white"
               >
                 <Download className="size-4" /> Download Teaching Register
               </Button>
@@ -136,7 +136,7 @@ function AnitsReportsPage() {
 
         {/* HOD & ADMIN REPORT */}
         {(isHod || isAdmin) && (
-          <Card className="rounded-2xl border-border/60 shadow-xs">
+          <Card className="rounded-xl border-border/60 shadow-xs">
             <CardHeader className="p-5">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-500">
@@ -164,7 +164,7 @@ function AnitsReportsPage() {
                 }
                 disabled={downloading === "dept_att"}
                 variant="outline"
-                className="w-full rounded-xl text-xs font-semibold gap-2"
+                className="w-full rounded-lg text-xs font-semibold gap-2 border-border/70"
               >
                 <Download className="size-4" /> Export Department Summary
               </Button>

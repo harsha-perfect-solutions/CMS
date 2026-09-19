@@ -47,4 +47,20 @@ router.put("/:id/read", authenticateToken, async (req: AuthenticatedRequest, res
   }
 });
 
+// PUT /api/notifications/read-all: Mark all notifications as read for logged-in user
+router.all(["/read-all", "/mark-all-read"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+
+    const result = await prisma.notification.updateMany({
+      where: { studentId: userId, isRead: false },
+      data: { isRead: true },
+    });
+
+    return res.json({ success: true, message: `Marked ${result.count} notifications as read.`, updatedCount: result.count });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

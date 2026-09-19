@@ -1066,8 +1066,8 @@ router.get("/student/exams/hall-ticket", authenticateToken, async (req: Authenti
   }
 });
 
-// GET /api/exams/schedules: Fetch published/drafted exam schedules
-router.get("/schedules", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+// GET /api/exams & /api/exams/schedules: Fetch published/drafted exam schedules
+router.get(["/", "/schedules"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { department, year, semester, status } = req.query;
 
@@ -1115,17 +1115,19 @@ router.get("/schedules", authenticateToken, async (req: AuthenticatedRequest, re
   }
 });
 
-// POST /api/exams/schedules: Create / Schedule a new examination
-router.post("/schedules", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+// POST /api/exams & /api/exams/schedules: Create / Schedule a new examination
+router.post(["/", "/schedules"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   const { name, type, department, year, semester, startDate, endDate, examFee, status } = req.body;
+  const effectiveStartDate = startDate || req.body.date;
+  const effectiveEndDate = endDate || req.body.date || effectiveStartDate;
 
-  if (!name || !department || !startDate || !endDate) {
+  if (!name || !department || !effectiveStartDate || !effectiveEndDate) {
     return res.status(400).json({ error: "Exam name, department, start date, and end date are required." });
   }
 
   try {
     const id = `e-${Date.now()}`;
-    const scheduleStatus = status || "Published";
+    const scheduleStatus = status || "Draft";
 
     await prisma.$executeRawUnsafe(
       `INSERT INTO exam_schedules (id, name, type, department, year, semester, start_date, end_date, status, exam_fee, created_by, created_at, updated_at)
@@ -1134,13 +1136,13 @@ router.post("/schedules", authenticateToken, async (req: AuthenticatedRequest, r
       name,
       type || "Regular",
       department,
-      Number(year) || 3,
-      Number(semester) || 5,
-      startDate,
-      endDate,
+      Number(year || 3),
+      Number(semester || 5),
+      effectiveStartDate,
+      effectiveEndDate,
       scheduleStatus,
-      Number(examFee) || 2000,
-      req.userId || "Assistant"
+      examFee ? Number(examFee) : 0,
+      req.userId || "System"
     );
 
     res.status(201).json({
@@ -1157,6 +1159,149 @@ router.post("/schedules", authenticateToken, async (req: AuthenticatedRequest, r
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/exams/:id: Update an examination schedule
+router.put(["/:id", "/schedules/:id"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { name, type, department, year, semester, startDate, endDate, examFee, status } = req.body;
+
+  try {
+    const existing = await prisma.examSchedule.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: "Exam schedule not found." });
+    }
+
+    const updated = await prisma.examSchedule.update({
+      where: { id },
+      data: {
+        ...(name && { name }),
+        ...(type && { type }),
+        ...(department && { department }),
+        ...(year !== undefined && { year: Number(year) }),
+        ...(semester !== undefined && { semester: Number(semester) }),
+        ...(startDate && { startDate }),
+        ...(endDate && { endDate }),
+        ...(examFee !== undefined && { examFee: Number(examFee) }),
+        ...(status && { status }),
+        updatedAt: new Date(),
+      },
+    });
+
+    return res.json({ success: true, message: "Exam schedule updated successfully.", exam: updated });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/exams/:id/publish: Publish examination and generate persistent notifications for eligible students
+router.post(["/:id/publish", "/schedules/:id/publish"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const existing = await prisma.examSchedule.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: "Exam schedule not found." });
+    }
+
+    const updated = await prisma.examSchedule.update({
+      where: { id },
+      data: { status: "Published", updatedAt: new Date() },
+    });
+
+    // Determine eligible students based on department and semester
+    const eligibleStudents = await prisma.student.findMany({
+      where: {
+        department: { equals: existing.department, mode: "insensitive" },
+        semester: existing.semester,
+        status: { not: "Inactive" },
+      },
+      select: { id: true, name: true, rollNumber: true },
+    });
+
+    if (eligibleStudents.length > 0) {
+      await prisma.notification.createMany({
+        data: eligibleStudents.map((s) => ({
+          studentId: s.id,
+          title: `Examination Published: ${existing.name}`,
+          message: `${existing.name} (${existing.type}) has been published for ${existing.department} Semester ${existing.semester}. Schedule: ${existing.startDate || "TBA"} to ${existing.endDate || "TBA"}.`,
+          type: "EXAM_PUBLISHED",
+          isRead: false,
+        })),
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: `Exam '${existing.name}' published successfully. Notified ${eligibleStudents.length} eligible students.`,
+      exam: updated,
+      notifiedStudentsCount: eligibleStudents.length,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/exams/:id: Delete an examination schedule
+router.delete(["/:id", "/schedules/:id"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const existing = await prisma.examSchedule.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: "Exam schedule not found." });
+    }
+
+    await prisma.examSchedule.delete({ where: { id } });
+    return res.json({ success: true, message: "Exam schedule deleted successfully." });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/exams/student/my-exams: Return active exams applicable to the authenticated student
+router.get("/student/my-exams", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    if (!authUserId) return res.status(401).json({ error: "Unauthorized." });
+
+    const student = await prisma.student.findUnique({
+      where: { id: authUserId },
+      select: { id: true, department: true, semester: true, year: true },
+    });
+
+    if (!student) return res.status(404).json({ error: "Student profile not found." });
+
+    const exams = await prisma.examSchedule.findMany({
+      where: {
+        department: { equals: student.department || "CSE", mode: "insensitive" },
+        semester: student.semester || 5,
+        status: "Published",
+      },
+      orderBy: { startDate: "asc" },
+    });
+
+    return res.json({
+      studentId: student.id,
+      department: student.department,
+      semester: student.semester,
+      exams: exams.map((e) => ({
+        id: e.id,
+        name: e.name,
+        type: e.type,
+        department: e.department,
+        semester: e.semester,
+        year: e.year,
+        startDate: e.startDate,
+        endDate: e.endDate,
+        status: e.status,
+        enrollmentDeadline: e.enrollmentDeadline,
+        examFee: Number(e.examFee || 0),
+      })),
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
   }
 });
 

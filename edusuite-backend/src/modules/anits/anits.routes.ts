@@ -39,7 +39,8 @@ const FALLBACK_ACCOUNTS = [
   { id: "ad-admin-id", rollNumber: "AD-ADMIN", name: "Rajesh Sharma (Admin)", email: "admin@cms.com", role: "admin", department: null },
   { id: "hod-cse-id", rollNumber: "HOD-CSE", name: "Dr. S. K. Gupta (HOD CSE)", email: "hod@cms.com", role: "hod", department: "CSE" },
   { id: "fac-cse-id", rollNumber: "FAC-CSE", name: "Dr. Ravi Kumar", email: "faculty@cms.com", role: "faculty", department: "CSE" },
-  { id: "st-cse-id", rollNumber: "22CS101", name: "K. Sai Teja (Student)", email: "student@cms.com", role: "student", department: "CSE", semester: 6 },
+  { id: "st-cse-id", rollNumber: "ST-CSE", name: "K. Sai Teja (Student)", email: "student@cms.com", role: "student", department: "CSE", semester: 5, section: "A" },
+  { id: "st-cse-22", rollNumber: "22CS101", name: "K. Sai Teja (Student)", email: "22cs101@cms.com", role: "student", department: "CSE", semester: 5, section: "A" },
   { id: "pt-cse-id", rollNumber: "PT-CSE", name: "Parent", email: "parent@cms.com", role: "parent", department: "CSE" },
   { id: "al-stud-id", rollNumber: "AL-STUD", name: "Alumni", email: "alumni@cms.com", role: "alumni", department: null },
 ];
@@ -211,6 +212,242 @@ router.post("/auth/login", async (req: Request, res: Response) => {
   }
 });
 
+// Helper function to resolve live PostgreSQL metrics for ANITS Super Admin
+export async function getSuperAdminDashboardData(adminUserId: string) {
+  // 1. Authenticated admin identity from PostgreSQL
+  let admin = await prisma.admin.findUnique({
+    where: { id: adminUserId },
+    select: { id: true, name: true, email: true, role: true, rollNumber: true },
+  });
+
+  if (!admin) {
+    admin = await prisma.admin.findFirst({
+      where: { role: { in: ["super_admin", "admin"] } },
+      select: { id: true, name: true, email: true, role: true, rollNumber: true },
+    });
+  }
+
+  // 2. Active academic year dynamically from MasterTimetable
+  const latestTimetable = await prisma.masterTimetable.findFirst({
+    select: { academicYear: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  const academicYear = latestTimetable?.academicYear || "2026-27";
+
+  // 3. Current server date and day in IST (Asia/Kolkata)
+  const now = new Date();
+  const todayDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now); // YYYY-MM-DD
+  const dayName = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "Asia/Kolkata" }).format(now);
+
+  // 4. Concurrently query PostgreSQL aggregates
+  const [activeStudents, activeFaculty, totalCourses, todaysClasses, submittedSessions, todaySlots] =
+    await Promise.all([
+      prisma.student.count({ where: { status: "Active" } }),
+      prisma.faculty.count({ where: { status: "Active" } }),
+      prisma.course.count(),
+      prisma.masterTimetable.count({
+        where: {
+          academicYear,
+          day: { equals: dayName, mode: "insensitive" },
+        },
+      }),
+      prisma.attendanceRecord.findMany({
+        where: {
+          date: todayDate,
+          timetable: {
+            academicYear,
+            day: { equals: dayName, mode: "insensitive" },
+          },
+        },
+        select: { timetableId: true },
+        distinct: ["timetableId"],
+      }),
+      prisma.masterTimetable.findMany({
+        where: {
+          academicYear,
+          day: { equals: dayName, mode: "insensitive" },
+        },
+        include: { course: true, faculty: true },
+        orderBy: [{ branch: "asc" }, { semester: "asc" }, { periodNumber: "asc" }],
+        take: 10,
+      }),
+    ]);
+
+  const conductedTimetableIds = new Set(submittedSessions.map((s) => s.timetableId).filter(Boolean));
+  const submittedCount = conductedTimetableIds.size;
+  const pendingCount = Math.max(0, todaysClasses - submittedCount);
+
+  return {
+    identity: {
+      name: admin?.name || "Super Admin",
+      role: admin?.role || "super_admin",
+      adminId: admin?.rollNumber || admin?.id || "SA-ADMIN",
+      email: admin?.email || "superadmin@cms.com",
+    },
+    academicYear,
+    today: {
+      date: todayDate,
+      day: dayName,
+    },
+    timetable: {
+      todaysClasses,
+    },
+    attendance: {
+      submitted: submittedCount,
+      pending: pendingCount,
+    },
+    members: {
+      activeFaculty,
+      activeStudents,
+    },
+    anitsRole: "ANITS_ADMIN" as const,
+    institution: "Anil Neerukonda Institute of Technology and Sciences",
+    date: todayDate,
+    day: dayName,
+    metrics: {
+      totalStudents: activeStudents,
+      totalFaculty: activeFaculty,
+      totalCourses,
+      todayClassesTotal: todaysClasses,
+      attendanceSubmittedCount: submittedCount,
+      attendancePendingCount: pendingCount,
+      activeFacultyCount: activeFaculty,
+    },
+    todaySchedule: todaySlots.map((s) => ({
+      id: s.id,
+      branch: s.branch,
+      semester: s.semester,
+      section: s.section,
+      periodNumber: s.periodNumber,
+      time: `${s.startTime} - ${s.endTime}`,
+      subject: s.course ? `${s.course.code} - ${s.course.name}` : "Assigned Lecture",
+      faculty: s.faculty ? s.faculty.name : "Faculty Not Assigned",
+      roomNo: s.roomNo || "Room 101",
+      isConducted: conductedTimetableIds.has(s.id),
+    })),
+  };
+}
+
+// =========================================================================
+// GET /api/anits/super-admin/dashboard: Dedicated Super Admin Real-Time Metrics
+// =========================================================================
+router.get("/super-admin/dashboard", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const authRole = (req.userRole || "").toLowerCase();
+  const anitsRole = resolveAnitsRole(authRole);
+
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. Requires ANITS Super Admin authorization." });
+  }
+
+  try {
+    const data = await getSuperAdminDashboardData(req.userId!);
+    return res.json(data);
+  } catch (error: any) {
+    console.error("Super Admin dashboard error:", error);
+    return res.status(500).json({ error: error.message || "Failed to load Super Admin dashboard." });
+  }
+});
+
+// =========================================================================
+// GET /api/anits/super-admin/search: Global Search for Students, Staff, & Departments
+// =========================================================================
+router.get("/super-admin/search", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const authRole = (req.userRole || "").toLowerCase();
+  const anitsRole = resolveAnitsRole(authRole);
+
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. Requires ANITS Super Admin authorization." });
+  }
+
+  const q = ((req.query.q as string) || "").trim();
+  if (!q || q.length < 2) {
+    return res.json({ students: [], faculty: [], departments: [] });
+  }
+
+  try {
+    const [students, faculty, departments] = await Promise.all([
+      prisma.student.findMany({
+        where: {
+          OR: [
+            { name: { contains: q, mode: "insensitive" } },
+            { rollNumber: { contains: q, mode: "insensitive" } },
+            { email: { contains: q, mode: "insensitive" } },
+            { department: { contains: q, mode: "insensitive" } },
+          ],
+        },
+        take: 5,
+        select: {
+          id: true,
+          name: true,
+          rollNumber: true,
+          department: true,
+          semester: true,
+          section: true,
+          status: true,
+        },
+        orderBy: { rollNumber: "asc" },
+      }),
+      prisma.faculty.findMany({
+        where: {
+          OR: [
+            { name: { contains: q, mode: "insensitive" } },
+            { rollNumber: { contains: q, mode: "insensitive" } },
+            { email: { contains: q, mode: "insensitive" } },
+            { department: { contains: q, mode: "insensitive" } },
+          ],
+        },
+        take: 5,
+        select: {
+          id: true,
+          name: true,
+          rollNumber: true,
+          department: true,
+          role: true,
+          status: true,
+        },
+        orderBy: { name: "asc" },
+      }),
+      prisma.department.findMany({
+        where: {
+          OR: [
+            { name: { contains: q, mode: "insensitive" } },
+            { code: { contains: q, mode: "insensitive" } },
+          ],
+        },
+        take: 5,
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          hodName: true,
+          status: true,
+        },
+        orderBy: { code: "asc" },
+      }),
+    ]);
+
+    return res.json({ students, faculty, departments });
+  } catch (error: any) {
+    console.error("Super Admin search error:", error);
+    return res.status(500).json({ error: error.message || "Failed to execute global search." });
+  }
+});
+
+// =========================================================================
+// GET /api/anits/academic-year: Active Institutional Academic Year
+// =========================================================================
+router.get("/academic-year", authenticateToken, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const latestTimetable = await prisma.masterTimetable.findFirst({
+      select: { academicYear: true },
+      orderBy: { updatedAt: "desc" },
+    });
+    return res.json({ academicYear: latestTimetable?.academicYear || "2026-27" });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // =========================================================================
 // GET /api/anits/dashboard: Unified, Role-Scoped Dashboard Metrics from PostgreSQL
 // =========================================================================
@@ -223,58 +460,14 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
     return res.status(403).json({ error: "Access denied to ANITS application." });
   }
 
-  const today = new Date().toISOString().split("T")[0];
-  const dayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  const now = new Date();
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+  const dayName = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "Asia/Kolkata" }).format(now);
 
   try {
     if (anitsRole === "ANITS_ADMIN") {
-      // Admin: Institution-wide timetable & attendance summary
-      const [totalStudents, totalFaculty, totalCourses, todaySlots, conductedRecords] = await Promise.all([
-        prisma.student.count({ where: { status: "Active" } }),
-        prisma.faculty.count({ where: { status: "Active" } }),
-        prisma.course.count(),
-        prisma.masterTimetable.findMany({
-          where: { day: { equals: dayName, mode: "insensitive" } },
-          include: { course: true, faculty: true },
-        }),
-        prisma.attendanceRecord.findMany({
-          where: { date: today },
-          select: { timetableId: true, status: true },
-        }),
-      ]);
-
-      const conductedTimetableIds = new Set(conductedRecords.map((r) => r.timetableId).filter(Boolean));
-      const submittedCount = conductedTimetableIds.size;
-      const pendingCount = Math.max(0, todaySlots.length - submittedCount);
-
-      return res.json({
-        anitsRole,
-        institution: "Anil Neerukonda Institute of Technology and Sciences",
-        academicYear: "2026-27",
-        date: today,
-        day: dayName,
-        metrics: {
-          totalStudents,
-          totalFaculty,
-          totalCourses,
-          todayClassesTotal: todaySlots.length,
-          attendanceSubmittedCount: submittedCount,
-          attendancePendingCount: pendingCount,
-          activeFacultyCount: totalFaculty,
-        },
-        todaySchedule: todaySlots.slice(0, 10).map((s) => ({
-          id: s.id,
-          branch: s.branch,
-          semester: s.semester,
-          section: s.section,
-          periodNumber: s.periodNumber,
-          time: `${s.startTime} - ${s.endTime}`,
-          subject: s.course ? `${s.course.code} - ${s.course.name}` : "Assigned Lecture",
-          faculty: s.faculty ? s.faculty.name : "Faculty Not Assigned",
-          roomNo: s.roomNo || "Room 101",
-          isConducted: conductedTimetableIds.has(s.id),
-        })),
-      });
+      const data = await getSuperAdminDashboardData(authUserId);
+      return res.json(data);
     }
 
     if (anitsRole === "HOD") {

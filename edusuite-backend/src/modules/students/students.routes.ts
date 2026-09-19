@@ -304,6 +304,260 @@ router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: Au
   }
 });
 
+// ==========================================
+// CANONICAL STUDENT PORTAL ENDPOINTS
+// ==========================================
+
+// GET /api/student/me: Authenticated student profile
+router.get("/me", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    if (!authUserId) return res.status(401).json({ error: "Unauthorized." });
+
+    const student = await prisma.student.findUnique({
+      where: { id: authUserId },
+      include: { parent: true },
+    });
+
+    if (!student) {
+      return res.status(404).json({ error: "Student profile not found." });
+    }
+
+    return res.json(mapStudentToFrontend(student));
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/student/attendance/summary: Summary metrics for student dashboard
+router.get("/attendance/summary", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    if (!authUserId) return res.status(401).json({ error: "Unauthorized." });
+
+    const records = await prisma.attendanceRecord.findMany({
+      where: { userId: authUserId },
+      include: { course: true },
+    });
+
+    const totalConducted = records.length;
+    const present = records.filter((r) => r.status === "Present").length;
+    const late = records.filter((r) => r.status === "Late").length;
+    const absent = records.filter((r) => r.status === "Absent").length;
+    const attended = present + late;
+    const overallPercentage = totalConducted > 0 ? Number(((attended / totalConducted) * 100).toFixed(1)) : 0;
+
+    // Subject breakdown for shortage count (<75%)
+    const courseStats = new Map<string, { total: number; attended: number }>();
+    records.forEach((r) => {
+      const cid = r.courseId || "unknown";
+      if (!courseStats.has(cid)) courseStats.set(cid, { total: 0, attended: 0 });
+      const stat = courseStats.get(cid)!;
+      stat.total++;
+      if (r.status === "Present" || r.status === "Late") stat.attended++;
+    });
+
+    let shortageCount = 0;
+    courseStats.forEach((c) => {
+      if (c.total > 0 && (c.attended / c.total) * 100 < 75.0) shortageCount++;
+    });
+
+    return res.json({
+      overallPercentage,
+      totalConducted,
+      present,
+      late,
+      absent,
+      attended,
+      shortageCount,
+      requiredThreshold: 75.0,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/student/attendance: Detailed attendance history and course breakdown
+router.get("/attendance", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    if (!authUserId) return res.status(401).json({ error: "Unauthorized." });
+
+    const [student, records] = await Promise.all([
+      prisma.student.findUnique({
+        where: { id: authUserId },
+        select: { id: true, name: true, rollNumber: true, department: true, semester: true, section: true },
+      }),
+      prisma.attendanceRecord.findMany({
+        where: { userId: authUserId },
+        include: { course: true, faculty: true },
+        orderBy: [{ date: "desc" }, { periodNumber: "desc" }],
+      }),
+    ]);
+
+    if (!student) return res.status(404).json({ error: "Student profile not found." });
+
+    const totalConducted = records.length;
+    const present = records.filter((r) => r.status === "Present").length;
+    const late = records.filter((r) => r.status === "Late").length;
+    const absent = records.filter((r) => r.status === "Absent").length;
+    const attended = present + late;
+    const overallPercentage = totalConducted > 0 ? Number(((attended / totalConducted) * 100).toFixed(1)) : 0;
+
+    // Group by course
+    const courseMap = new Map<string, any>();
+    records.forEach((r) => {
+      const cid = r.courseId || "gen";
+      if (!courseMap.has(cid)) {
+        courseMap.set(cid, {
+          courseId: cid,
+          subjectCode: r.course?.code || "SUB",
+          subjectName: r.course?.name || "Subject",
+          facultyName: r.faculty?.name || "Faculty",
+          total: 0,
+          present: 0,
+          late: 0,
+          absent: 0,
+        });
+      }
+      const c = courseMap.get(cid);
+      c.total++;
+      if (r.status === "Present") c.present++;
+      else if (r.status === "Late") c.late++;
+      else if (r.status === "Absent") c.absent++;
+    });
+
+    const subjects = Array.from(courseMap.values()).map((s) => {
+      const att = s.present + s.late;
+      const pct = s.total > 0 ? Number(((att / s.total) * 100).toFixed(1)) : 0;
+      return {
+        ...s,
+        percentage: pct,
+        isShortage: pct < 75.0,
+      };
+    });
+
+    return res.json({
+      student,
+      summary: {
+        totalConducted,
+        present,
+        late,
+        absent,
+        attended,
+        overallPercentage,
+        shortageCount: subjects.filter((s) => s.isShortage).length,
+      },
+      subjects,
+      history: records.map((r) => ({
+        id: r.id,
+        date: r.date,
+        periodNumber: r.periodNumber,
+        status: r.status,
+        subjectCode: r.course?.code || "",
+        subjectName: r.course?.name || "Subject",
+        facultyName: r.faculty?.name || "Faculty Member",
+        remarks: r.remarks,
+      })),
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/student/timetable: Canonical timetable alias for student
+router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    if (!authUserId) return res.status(401).json({ error: "Unauthorized." });
+
+    const student = await prisma.student.findUnique({
+      where: { id: authUserId },
+      select: { department: true, semester: true, section: true },
+    });
+
+    if (!student) return res.status(404).json({ error: "Student profile not found." });
+
+    const branch = normalizeBranchCode(student.department || undefined);
+    const cleanSec = (student.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+
+    const records = await prisma.masterTimetable.findMany({
+      where: {
+        branch,
+        semester: student.semester || 5,
+        section: { in: [cleanSec, `Section ${cleanSec}`] },
+      },
+      include: { faculty: true, course: true },
+      orderBy: [{ day: "asc" }, { periodNumber: "asc" }],
+    });
+
+    return res.json({
+      branch,
+      semester: student.semester || 5,
+      section: cleanSec,
+      periods: records.map((r) => ({
+        id: r.id,
+        day: r.day,
+        periodNumber: r.periodNumber,
+        time: `${r.startTime} - ${r.endTime}`,
+        subjectCode: r.course?.code || "",
+        subjectName: r.course?.name || "Subject",
+        facultyName: r.faculty?.name || "Faculty Member",
+        roomNo: r.roomNo,
+        isLab: r.isLab,
+      })),
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/student/exams: Exams scheduled for student's group
+router.get("/exams", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    if (!authUserId) return res.status(401).json({ error: "Unauthorized." });
+
+    const student = await prisma.student.findUnique({
+      where: { id: authUserId },
+      select: { department: true, semester: true },
+    });
+
+    if (!student) return res.status(404).json({ error: "Student profile not found." });
+
+    const exams = await prisma.examSchedule.findMany({
+      where: {
+        department: { equals: student.department || "CSE", mode: "insensitive" },
+        semester: student.semester || 5,
+        status: "Published",
+      },
+      orderBy: { startDate: "asc" },
+    });
+
+    return res.json(exams);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/student/notifications: Notifications for student with unread counter
+router.get("/notifications", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    if (!authUserId) return res.status(401).json({ error: "Unauthorized." });
+
+    const notifications = await prisma.notification.findMany({
+      where: { studentId: authUserId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const unreadCount = notifications.filter((n) => !n.isRead).length;
+    return res.json({ unreadCount, notifications });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/students/:id: Fetch single student details
 router.get("/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {

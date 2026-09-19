@@ -885,6 +885,23 @@ router.post("/mark", authenticateToken, async (req: AuthenticatedRequest, res: R
 
     const markingFacultyId = (role === "faculty" || role === "hod") ? req.userId : (assignedTT?.facultyId || undefined);
 
+    if (timetableId) {
+      const existingCount = await prisma.attendanceRecord.count({
+        where: {
+          timetableId,
+          date,
+          periodNumber: period,
+        },
+      });
+      if (existingCount > 0 && !req.body.overwrite && !req.body.allowUpdate) {
+        return res.status(409).json({
+          error: `Attendance for this session has already been submitted for date ${date} (Period ${period}). Duplicate submission prevented.`,
+          code: "DUPLICATE_SESSION",
+          alreadySubmitted: true,
+        });
+      }
+    }
+
     const results = await prisma.$transaction(
       records.map((r: { studentId: string; status: string; remarks?: string }) =>
         prisma.attendanceRecord.upsert({
@@ -1503,6 +1520,13 @@ router.post(["/faculty/session/:timetableId/mark", "/faculty/session/:timetableI
       },
     });
     const isAlreadySubmitted = existingCount > 0;
+    if (isAlreadySubmitted && !req.body.overwrite && !req.body.allowUpdate) {
+      return res.status(409).json({
+        error: `Attendance for this session has already been submitted for date ${date} (Period ${period}). Duplicate submission prevented.`,
+        code: "DUPLICATE_SESSION",
+        alreadySubmitted: true,
+      });
+    }
 
     // Execute atomic PostgreSQL transaction
     const results = await prisma.$transaction(async (tx) => {
@@ -2291,6 +2315,210 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         lateClasses,
         totalConducted,
       },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// CANONICAL ATTENDANCE SESSION ALIASES
+// ==========================================
+
+// POST /api/attendance/sessions: Register / lookup attendance session
+router.post("/sessions", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { timetableId, date, periodNumber } = req.body;
+    if (!timetableId) {
+      return res.status(400).json({ error: "timetableId is required to initialize session." });
+    }
+    const timetable = await prisma.masterTimetable.findUnique({
+      where: { id: timetableId },
+      include: { course: true, faculty: true },
+    });
+    if (!timetable) {
+      return res.status(404).json({ error: "Timetable session not found." });
+    }
+    const targetDate = date || new Date().toISOString().split("T")[0];
+    const targetPeriod = Number(periodNumber) || timetable.periodNumber;
+
+    const existingCount = await prisma.attendanceRecord.count({
+      where: {
+        timetableId: timetable.id,
+        date: targetDate,
+        periodNumber: targetPeriod,
+      },
+    });
+
+    return res.json({
+      success: true,
+      sessionId: timetable.id,
+      date: targetDate,
+      periodNumber: targetPeriod,
+      timetable,
+      isAlreadySubmitted: existingCount > 0,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/attendance/sessions/:id: Retrieve roster and details for session
+router.get("/sessions/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const timetable = await prisma.masterTimetable.findUnique({
+      where: { id: req.params.id },
+      include: { course: true, faculty: true },
+    });
+    if (!timetable) return res.status(404).json({ error: "Session not found." });
+    const roster = await resolveAuthorizedSessionRoster(timetable);
+    const date = (req.query.date as string) || new Date().toISOString().split("T")[0];
+    const existingRecords = await prisma.attendanceRecord.findMany({
+      where: {
+        userId: { in: roster.map((s) => s.id) },
+        date,
+        periodNumber: timetable.periodNumber,
+      },
+    });
+    return res.json({
+      success: true,
+      session: timetable,
+      roster,
+      existingRecords,
+      isAlreadySubmitted: existingRecords.length > 0,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/attendance/sessions/:id/records: Mark records for session
+router.post("/sessions/:id/records", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const authUserId = req.userId;
+  const authRole = (req.userRole || "").toLowerCase();
+  const timetableId = req.params.id;
+  const { date } = req.body;
+  const records = req.body.records || req.body.students;
+
+  if (!authUserId) return res.status(401).json({ error: "Unauthorized." });
+  if (authRole === "student" || authRole === "parent") {
+    return res.status(403).json({ error: "Access denied. Students cannot mark attendance." });
+  }
+  if (!date || !Array.isArray(records) || records.length === 0) {
+    return res.status(400).json({ error: "date and non-empty records array are required." });
+  }
+
+  const timetable = await prisma.masterTimetable.findUnique({
+    where: { id: timetableId },
+    include: { course: true, faculty: true },
+  });
+  if (!timetable) return res.status(404).json({ error: "Timetable session not found." });
+
+  const period = timetable.periodNumber;
+  const existingCount = await prisma.attendanceRecord.count({
+    where: { timetableId: timetable.id, date, periodNumber: period },
+  });
+  if (existingCount > 0 && !req.body.overwrite && !req.body.allowUpdate) {
+    return res.status(409).json({
+      error: `Attendance for this session has already been submitted for date ${date} (Period ${period}). Duplicate submission prevented.`,
+      code: "DUPLICATE_SESSION",
+      alreadySubmitted: true,
+    });
+  }
+
+  const markingFacultyId = (authRole === "faculty" || authRole === "hod") ? authUserId : (timetable.facultyId || undefined);
+  const courseId = timetable.courseId || undefined;
+
+  const results = await prisma.$transaction(async (tx) => {
+    return Promise.all(
+      records.map((r: any) => {
+        const sId = r.studentId || r.id;
+        return tx.attendanceRecord.upsert({
+          where: {
+            userId_date_periodNumber: { userId: sId, date, periodNumber: period },
+          },
+          update: {
+            status: r.status,
+            timetableId: timetable.id,
+            ...(courseId && { courseId }),
+            ...(markingFacultyId && { facultyId: markingFacultyId }),
+          },
+          create: {
+            userId: sId,
+            date,
+            periodNumber: period,
+            status: r.status,
+            timetableId: timetable.id,
+            ...(courseId && { courseId }),
+            ...(markingFacultyId && { facultyId: markingFacultyId }),
+          },
+        });
+      })
+    );
+  });
+
+  return res.json({
+    success: true,
+    message: `Recorded attendance for ${results.length} students.`,
+    count: results.length,
+  });
+});
+
+// GET /api/attendance/student/:studentId: Student attendance lookup with authorization
+router.get("/student/:studentId", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    const authRole = (req.userRole || "").toLowerCase();
+    const targetStudentId = req.params.studentId;
+
+    if (authRole === "student" && authUserId !== targetStudentId) {
+      const selfStudent = await prisma.student.findUnique({ where: { id: authUserId } });
+      if (selfStudent?.id !== targetStudentId && selfStudent?.rollNumber !== targetStudentId) {
+        return res.status(403).json({ error: "Access denied. Students are only authorized to view their own attendance." });
+      }
+    }
+
+    const student = await prisma.student.findFirst({
+      where: {
+        OR: [{ id: targetStudentId }, { rollNumber: targetStudentId }],
+      },
+    });
+
+    if (!student) return res.status(404).json({ error: "Student not found." });
+
+    const records = await prisma.attendanceRecord.findMany({
+      where: { userId: student.id },
+      include: { course: true, faculty: true, timetable: { include: { course: true, faculty: true } } },
+      orderBy: [{ date: "desc" }, { periodNumber: "asc" }],
+    });
+
+    const totalConducted = records.length;
+    const present = records.filter((r) => r.status === "Present").length;
+    const late = records.filter((r) => r.status === "Late").length;
+    const absent = records.filter((r) => r.status === "Absent").length;
+    const attended = present + late;
+    const percentage = totalConducted > 0 ? Number(((attended / totalConducted) * 100).toFixed(1)) : 0;
+
+    return res.json({
+      success: true,
+      student: {
+        id: student.id,
+        rollNumber: student.rollNumber,
+        name: student.name,
+        department: student.department,
+        semester: student.semester,
+        section: student.section,
+      },
+      summary: {
+        totalConducted,
+        present,
+        late,
+        absent,
+        attended,
+        percentage,
+        overallPercentage: percentage,
+      },
+      records,
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });

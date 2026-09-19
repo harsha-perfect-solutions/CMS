@@ -565,8 +565,8 @@ router.post("/curriculum", authenticateToken, requireSuperAdmin, async (req: Aut
 // 5. MASTER TIMETABLE APIS (POSTGRESQL SINGLE SOURCE OF TRUTH)
 // ==========================================
 
-// GET /api/academics/timetable: Fetch authoritative timetable with server-side RBAC
-router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+// GET /api/academics/timetable & /api/timetable: Fetch authoritative timetable with server-side RBAC
+router.get(["/timetable", "/"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userRole = (req.userRole || "").toLowerCase();
     const authUserId = req.userId;
@@ -681,8 +681,8 @@ router.get("/timetable", authenticateToken, async (req: AuthenticatedRequest, re
   }
 });
 
-// PUT /api/academics/timetable/update-period: Update single period assignment with conflict validation
-router.put("/timetable/update-period", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+// POST & PUT /api/timetable & /api/academics/timetable/update-period: Create / Update period with conflict validation
+const handleSavePeriod = async (req: AuthenticatedRequest, res: Response) => {
   const userRole = (req.userRole || "").toLowerCase();
   const authUserId = req.userId;
   const isSuperAdmin =
@@ -697,7 +697,7 @@ router.put("/timetable/update-period", authenticateToken, async (req: Authentica
     return res.status(403).json({ error: "Access denied. You do not have permission to modify timetable records." });
   }
 
-  const { id } = req.body;
+  const id = req.params.id || req.body.id;
   let existingRecord: any = null;
   if (id) {
     existingRecord = await prisma.masterTimetable.findUnique({
@@ -851,6 +851,47 @@ router.put("/timetable/update-period", authenticateToken, async (req: Authentica
     await auditLog(req, "TIMETABLE_PERIOD_UPDATED", "Academic Management", "MasterTimetable", updated.id);
 
     return res.json(updated);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+router.put(["/timetable/update-period", "/timetable/:id", "/:id"], authenticateToken, handleSavePeriod);
+router.post(["/timetable", "/"], authenticateToken, handleSavePeriod);
+
+// DELETE /api/timetable/:id: Remove timetable period entry
+router.delete(["/timetable/:id", "/:id"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const userRole = (req.userRole || "").toLowerCase();
+  const authUserId = req.userId;
+  const isSuperAdmin = ["super_admin", "superadmin", "admin", "principal", "academic_dean"].includes(userRole);
+  const isHod = userRole === "hod";
+
+  if (!isSuperAdmin && !isHod) {
+    return res.status(403).json({ error: "Access denied. Only HOD or Admin can delete timetable periods." });
+  }
+
+  const { id } = req.params;
+  try {
+    const existing = await prisma.masterTimetable.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: "Timetable period record not found." });
+    }
+
+    if (isHod) {
+      let hodDept = req.userDepartment;
+      if (!hodDept && authUserId) {
+        const fac = await prisma.faculty.findUnique({ where: { id: authUserId }, select: { department: true } });
+        hodDept = fac?.department || "";
+      }
+      const allowedDepts = getMatchingDepartments(hodDept).map((d) => d.toUpperCase());
+      if (!allowedDepts.includes(existing.branch.toUpperCase())) {
+        return res.status(403).json({ error: `Access denied. HOD can only delete timetable for ${hodDept}.` });
+      }
+    }
+
+    await prisma.masterTimetable.delete({ where: { id } });
+    await auditLog(req, "TIMETABLE_PERIOD_DELETED", "Academic Management", "MasterTimetable", id);
+    return res.json({ success: true, message: "Timetable period deleted successfully." });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }

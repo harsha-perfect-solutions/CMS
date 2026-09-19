@@ -683,7 +683,7 @@ router.get("/schedule", authenticateToken, async (req: AuthenticatedRequest, res
 });
 
 // GET /api/faculty/my-timetable: Secure personal timetable backed by PostgreSQL for authenticated faculty
-router.get(["/my-timetable", "/timetable/me"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const authUserId = req.userId;
     const authRole = (req.userRole || "").toLowerCase();
@@ -1826,6 +1826,56 @@ router.get(["/subjects", "/my-subjects"], authenticateToken, async (req: Authent
       stats,
       subjects,
     });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/faculty/me: Authenticated faculty identity profile
+router.get("/me", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.userId) return res.status(401).json({ error: "Unauthorized." });
+    const faculty = await prisma.faculty.findUnique({
+      where: { id: req.userId },
+    });
+    if (!faculty) {
+      // Fallback for admin
+      const admin = await prisma.admin.findUnique({ where: { id: req.userId } });
+      if (admin) return res.json({ success: true, faculty: admin, role: admin.role });
+      return res.status(404).json({ error: "Faculty profile not found." });
+    }
+    return res.json({ success: true, faculty, role: faculty.role });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/faculty/sections: Distinct sections taught by authenticated faculty
+router.get(["/sections", "/my-sections"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.userId) return res.status(401).json({ error: "Unauthorized." });
+    const entries = await prisma.masterTimetable.findMany({
+      where: { facultyId: req.userId },
+      select: { branch: true, semester: true, section: true, academicYear: true },
+      distinct: ["branch", "semester", "section"],
+    });
+    return res.json({ success: true, sections: entries });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/faculty/attendance: Recent attendance records marked by authenticated faculty
+router.get("/attendance", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.userId) return res.status(401).json({ error: "Unauthorized." });
+    const records = await prisma.attendanceRecord.findMany({
+      where: { facultyId: req.userId },
+      take: 100,
+      orderBy: { createdAt: "desc" },
+      include: { user: true, course: true, timetable: true },
+    });
+    return res.json({ success: true, records, count: records.length });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }

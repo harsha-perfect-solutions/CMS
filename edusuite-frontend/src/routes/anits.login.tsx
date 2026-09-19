@@ -251,7 +251,7 @@ function AnitsLoginPage() {
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="w-full h-11 rounded-xl font-bold text-xs uppercase tracking-wider mt-2 shadow-sm transition-all"
+              className="w-full h-11 rounded-lg font-semibold text-xs uppercase tracking-wider mt-2 shadow-xs bg-blue-600 hover:bg-blue-700 text-white transition-all cursor-pointer"
             >
               {isSubmitting ? (
                 "Authenticating..."

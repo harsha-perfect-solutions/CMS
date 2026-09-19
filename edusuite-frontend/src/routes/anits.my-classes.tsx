@@ -46,7 +46,7 @@ function AnitsMyClassesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-card p-5 rounded-2xl border border-border/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-card p-5 rounded-xl border border-border/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-foreground">My Classes &amp; Student Cohorts</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -56,24 +56,24 @@ function AnitsMyClassesPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="rounded-2xl border-border/60 p-4">
+        <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
           <span className="text-xs font-bold text-muted-foreground">Assigned Courses</span>
           <div className="text-2xl font-black text-foreground mt-2">{courses.slice(0, 4).length}</div>
           <p className="text-[11px] text-muted-foreground mt-0.5">Active curriculum subjects</p>
         </Card>
-        <Card className="rounded-2xl border-border/60 p-4">
+        <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
           <span className="text-xs font-bold text-muted-foreground">Total Enrolled Students</span>
           <div className="text-2xl font-black text-foreground mt-2">{students.length}</div>
           <p className="text-[11px] text-muted-foreground mt-0.5">Across all class sections</p>
         </Card>
-        <Card className="rounded-2xl border-border/60 p-4">
+        <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
           <span className="text-xs font-bold text-muted-foreground">Primary Department</span>
           <div className="text-2xl font-black text-primary mt-2">{department || "CSE"}</div>
           <p className="text-[11px] text-muted-foreground mt-0.5">ANITS Engineering Division</p>
         </Card>
       </div>
 
-      <Card className="rounded-2xl border-border/60 overflow-hidden shadow-xs">
+      <Card className="rounded-xl border-border/60 overflow-hidden shadow-xs bg-card">
         <CardHeader className="bg-muted/15 border-b border-border/40 py-4 px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <CardTitle className="text-sm font-bold">Class Roster Ledger</CardTitle>
@@ -85,7 +85,7 @@ function AnitsMyClassesPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name, roll no..."
-              className="h-8 pl-8 text-xs rounded-xl"
+              className="h-8 pl-8 text-xs rounded-lg"
             />
           </div>
         </CardHeader>

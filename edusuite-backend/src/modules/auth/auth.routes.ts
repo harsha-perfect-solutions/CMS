@@ -330,7 +330,7 @@ router.post("/login", async (req: Request, res: Response) => {
 });
 
 // Profile Controller — Returns authenticated user details
-router.get("/profile", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+router.get(["/profile", "/me"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const role = req.userRole!;
     let user: any = null;
@@ -728,6 +728,11 @@ router.post("/reset-password", async (req: Request, res: Response) => {
   } catch (err: any) {
     return res.status(500).json({ error: "Failed to reset password. Please try again." });
   }
+});
+
+// POST /api/auth/logout: End/invalidate authenticated session
+router.post("/logout", authenticateToken, (req: AuthenticatedRequest, res: Response) => {
+  return res.json({ success: true, message: "Successfully logged out." });
 });
 
 export default router;

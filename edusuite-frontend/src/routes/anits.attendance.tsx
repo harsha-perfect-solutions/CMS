@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 // Faculty Attendance Components
 import { AttendanceHeader } from "@/components/dashboard/attendance/attendance-header";
@@ -82,6 +83,71 @@ function AnitsAttendancePage() {
   const [loadingFaculty, setLoadingFaculty] = useState(isFaculty || isHod);
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // =========================================================================
+  // ADMIN & INSTITUTION-WIDE ATTENDANCE LEDGER STATE (POSTGRESQL DRIVEN)
+  // =========================================================================
+  const [ledgerRecords, setLedgerRecords] = useState<any[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerSearch, setLedgerSearch] = useState("");
+  const [ledgerStatus, setLedgerStatus] = useState("All");
+  const [ledgerDept, setLedgerDept] = useState(department || "All");
+  const [ledgerTimeframe, setLedgerTimeframe] = useState("all");
+
+  const fetchLedger = useCallback(async () => {
+    try {
+      setLedgerLoading(true);
+      const params: Record<string, string> = {};
+      if (ledgerStatus && ledgerStatus !== "All") params.status = ledgerStatus;
+      if (ledgerDept && ledgerDept !== "All") params.department = ledgerDept;
+      if (ledgerSearch.trim()) params.search = ledgerSearch.trim();
+      if (ledgerTimeframe && ledgerTimeframe !== "all") params.timeframe = ledgerTimeframe;
+
+      const res = await api.get("/api/attendance/ledger", { params });
+      if (Array.isArray(res.data)) {
+        setLedgerRecords(res.data);
+      }
+    } catch (err: any) {
+      toast.error("Failed to load attendance ledger from PostgreSQL.");
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, [ledgerStatus, ledgerDept, ledgerSearch, ledgerTimeframe]);
+
+  const handleExportLedgerCSV = async () => {
+    try {
+      const token = localStorage.getItem("token") || localStorage.getItem("cms_token");
+      const url = new URL("http://localhost:5000/api/attendance/export");
+      url.searchParams.set("format", "csv");
+      if (ledgerDept && ledgerDept !== "All") url.searchParams.set("department", ledgerDept);
+      if (ledgerStatus && ledgerStatus !== "All") url.searchParams.set("status", ledgerStatus);
+      if (ledgerSearch.trim()) url.searchParams.set("search", ledgerSearch.trim());
+      if (ledgerTimeframe && ledgerTimeframe !== "all") url.searchParams.set("timeframe", ledgerTimeframe);
+
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to export attendance ledger");
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = `ANITS_Master_Attendance_Ledger_${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      toast.success("Attendance ledger exported to CSV successfully.");
+    } catch {
+      toast.error("Unable to export attendance ledger.");
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin || isHod) {
+      fetchLedger();
+    }
+  }, [isAdmin, isHod, fetchLedger]);
 
   const fetchFacultyAttendance = useCallback(async () => {
     try {
@@ -352,7 +418,7 @@ function AnitsAttendancePage() {
 
         {/* Low Attendance Banner Alerts */}
         {studentAlerts.length > 0 && (
-          <div className="p-4 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive space-y-1">
+          <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive space-y-1">
             <div className="flex items-center gap-2 font-bold text-xs">
               <AlertTriangle className="size-4" /> LOW ATTENDANCE ALERT (&lt;75% Threshold)
             </div>
@@ -398,52 +464,242 @@ function AnitsAttendancePage() {
   }
 
   // =========================================================================
-  // RENDER 3: HOD & ADMIN ATTENDANCE CONTROLS
+  // RENDER 3: HOD & ADMIN INSTITUTION-WIDE ATTENDANCE LEDGER
   // =========================================================================
+  const presentCount = ledgerRecords.filter((r) => r.status === "Present").length;
+  const absentCount = ledgerRecords.filter((r) => r.status === "Absent").length;
+  const lateCount = ledgerRecords.filter((r) => r.status === "Late").length;
+  const totalEntries = ledgerRecords.length;
+  const avgAttendancePct = totalEntries > 0 ? (((presentCount + lateCount) / totalEntries) * 100).toFixed(1) : "0.0";
+
   return (
     <div className="space-y-6">
+      {/* Header Banner with Action Buttons */}
       <div className="bg-card p-5 rounded-2xl border border-border/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-foreground">
-            {isHod ? `${department || "Department"} Attendance Governance` : "ANITS Institutional Attendance Controls"}
+          <h2 className="text-xl font-black text-foreground">
+            {isHod ? `${department || "Department"} Attendance Ledger & Governance` : "ANITS Institutional Attendance Ledger"}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Real-time shortage tracking, condonation approvals, and faculty submission status.
+            Real-time synchronization with PostgreSQL AttendanceRecord ledger across all academic branches.
           </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportLedgerCSV}
+            className="h-9 rounded-xl text-xs font-semibold gap-1.5 bg-card hover:bg-muted/50 border-border/70"
+          >
+            <Download className="size-3.5" /> Export Ledger (CSV)
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchLedger()}
+            disabled={ledgerLoading}
+            className="h-9 rounded-xl text-xs font-semibold gap-1.5 bg-card hover:bg-muted/50 border-border/70"
+          >
+            <RefreshCw className={`size-3.5 ${ledgerLoading ? "animate-spin" : ""}`} /> Refresh
+          </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="rounded-2xl border-border/60 p-4">
-          <span className="text-xs font-bold text-muted-foreground">Shortage Students (&lt;75%)</span>
-          <div className="text-2xl font-black text-destructive mt-2">14</div>
-          <p className="text-[11px] text-muted-foreground mt-0.5">Eligible for condonation</p>
-        </Card>
-        <Card className="rounded-2xl border-border/60 p-4">
-          <span className="text-xs font-bold text-muted-foreground">Department Average</span>
-          <div className="text-2xl font-black text-foreground mt-2">84.8%</div>
-          <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">Above institutional target</p>
-        </Card>
-        <Card className="rounded-2xl border-border/60 p-4">
-          <span className="text-xs font-bold text-muted-foreground">Faculty Submissions Today</span>
-          <div className="text-2xl font-black text-foreground mt-2">{facultyStats.conducted} / {facultyStats.conducted + facultyStats.pending}</div>
-          <p className="text-[11px] text-amber-600 font-semibold mt-0.5">{facultyStats.pending} slots pending</p>
-        </Card>
-      </div>
+      {/* Tabs: Full Ledger vs Today's Sessions */}
+      <Tabs defaultValue="ledger" className="space-y-4">
+        <TabsList className="bg-card border border-border/60 p-1 rounded-xl">
+          <TabsTrigger value="ledger" className="rounded-lg text-xs font-semibold gap-1.5">
+            <ClipboardCheck className="size-3.5" /> Attendance Ledger ({totalEntries})
+          </TabsTrigger>
+          <TabsTrigger value="sessions" className="rounded-lg text-xs font-semibold gap-1.5">
+            <CalendarCheck className="size-3.5" /> Today's Scheduled Sessions
+          </TabsTrigger>
+        </TabsList>
 
-      <Card className="rounded-2xl border-border/60 overflow-hidden">
-        <CardHeader className="bg-muted/15 border-b border-border/40 py-4 px-6">
-          <CardTitle className="text-sm font-bold">Today's Department Sessions</CardTitle>
-          <CardDescription className="text-xs">Live attendance verification across scheduled periods</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          <TodayClasses
-            classes={facultyClasses}
-            onTakeAttendance={loadRosterForSlot}
-            onViewRegister={loadRosterForSlot}
-          />
-        </CardContent>
-      </Card>
+        {/* TAB 1: FULL ATTENDANCE LEDGER */}
+        <TabsContent value="ledger" className="space-y-4">
+          {/* Summary Metric Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Total Records</span>
+              <div className="text-2xl font-black text-foreground mt-1">{totalEntries}</div>
+              <p className="text-[10px] text-muted-foreground mt-0.5">PostgreSQL ledger rows</p>
+            </Card>
+
+            <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+              <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Present</span>
+              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{presentCount}</div>
+              <p className="text-[10px] text-emerald-600/80 font-medium mt-0.5">Marked present</p>
+            </Card>
+
+            <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+              <span className="text-[11px] font-bold text-rose-600 uppercase tracking-wider">Absent</span>
+              <div className="text-2xl font-black text-rose-600 mt-1">{absentCount}</div>
+              <p className="text-[10px] text-rose-600/80 font-medium mt-0.5">Marked absent</p>
+            </Card>
+
+            <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+              <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider">Attendance Rate</span>
+              <div className="text-2xl font-black text-blue-600 mt-1">{avgAttendancePct}%</div>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Overall cohort average</p>
+            </Card>
+          </div>
+
+          {/* Filter Bar */}
+          <Card className="rounded-xl border border-border/60 shadow-xs p-3.5 bg-card">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              {/* Search input */}
+              <div className="relative flex-1 min-w-0">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  placeholder="Filter by student name, roll number, course code..."
+                  className="h-8.5 pl-8.5 text-xs bg-muted/30 border-border/60 rounded-lg w-full"
+                />
+              </div>
+
+              {/* Filters dropdowns */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Department filter */}
+                {isAdmin && (
+                  <select
+                    value={ledgerDept}
+                    onChange={(e) => setLedgerDept(e.target.value)}
+                    aria-label="Filter by Department"
+                    className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="All">All Departments</option>
+                    <option value="CSE">CSE</option>
+                    <option value="AI&ML">AI&amp;ML</option>
+                    <option value="AI&DS">AI&amp;DS</option>
+                    <option value="IT">IT</option>
+                    <option value="EEE">EEE</option>
+                    <option value="ECE">ECE</option>
+                    <option value="CIVIL">CIVIL</option>
+                    <option value="MECHANICAL">MECHANICAL</option>
+                  </select>
+                )}
+
+                {/* Status filter */}
+                <select
+                  value={ledgerStatus}
+                  onChange={(e) => setLedgerStatus(e.target.value)}
+                  aria-label="Filter by Attendance Status"
+                  className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="All">All Statuses</option>
+                  <option value="Present">Present</option>
+                  <option value="Absent">Absent</option>
+                  <option value="Late">Late</option>
+                </select>
+
+                {/* Timeframe filter */}
+                <select
+                  value={ledgerTimeframe}
+                  onChange={(e) => setLedgerTimeframe(e.target.value)}
+                  aria-label="Filter by Timeframe"
+                  className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="all">All Dates</option>
+                  <option value="daily">Today Only</option>
+                  <option value="weekly">Past 7 Days</option>
+                  <option value="monthly">Past 30 Days</option>
+                </select>
+              </div>
+            </div>
+          </Card>
+
+          {/* Ledger Table */}
+          <Card className="rounded-xl border border-border/60 shadow-xs overflow-hidden bg-card">
+            {ledgerLoading ? (
+              <div className="p-12 text-center">
+                <Loader2 className="size-8 animate-spin text-primary mx-auto mb-2" />
+                <p className="text-xs text-muted-foreground font-semibold">Loading PostgreSQL attendance ledger...</p>
+              </div>
+            ) : ledgerRecords.length === 0 ? (
+              <div className="p-12 text-center text-xs text-muted-foreground">
+                No attendance ledger records found matching the current filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-muted/30 border-b border-border/50 text-muted-foreground font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Date</th>
+                      <th className="py-3 px-3">Period</th>
+                      <th className="py-3 px-4">Dept &amp; Section</th>
+                      <th className="py-3 px-4">Student</th>
+                      <th className="py-3 px-4">Course</th>
+                      <th className="py-3 px-4">Faculty</th>
+                      <th className="py-3 px-4">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40">
+                    {ledgerRecords.map((rec) => (
+                      <tr key={rec.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="py-2.5 px-4 font-mono text-[11px] text-foreground font-medium whitespace-nowrap">
+                          {rec.date}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <span className="font-semibold text-foreground">Period {rec.periodNumber || 1}</span>
+                        </td>
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <span className="font-bold text-foreground">{rec.department}</span>
+                          <span className="text-muted-foreground ml-1">Sem {rec.semester || 1} ({rec.section || "A"})</span>
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <div className="font-bold text-foreground">{rec.studentName}</div>
+                          <div className="text-[11px] font-mono text-muted-foreground">{rec.rollNo}</div>
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <div className="font-bold text-foreground">{rec.courseCode}</div>
+                          <div className="text-[11px] text-muted-foreground truncate max-w-44">{rec.courseTitle}</div>
+                        </td>
+                        <td className="py-2.5 px-4 text-muted-foreground whitespace-nowrap">
+                          {rec.instructor}
+                        </td>
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <Badge
+                            variant="outline"
+                            className={
+                              rec.status === "Present"
+                                ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[11px] font-bold"
+                                : rec.status === "Late"
+                                ? "bg-amber-500/10 text-amber-600 border-amber-500/20 text-[11px] font-bold"
+                                : "bg-rose-500/10 text-rose-600 border-rose-500/20 text-[11px] font-bold"
+                            }
+                          >
+                            {rec.status}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+
+        {/* TAB 2: TODAY'S SCHEDULED SESSIONS */}
+        <TabsContent value="sessions" className="space-y-4">
+          <Card className="rounded-xl border-border/60 overflow-hidden bg-card">
+            <CardHeader className="bg-muted/15 border-b border-border/40 py-4 px-6">
+              <CardTitle className="text-sm font-bold">Today's Department Sessions</CardTitle>
+              <CardDescription className="text-xs">Live attendance verification across scheduled periods</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <TodayClasses
+                classes={facultyClasses}
+                onTakeAttendance={loadRosterForSlot}
+                onViewRegister={loadRosterForSlot}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

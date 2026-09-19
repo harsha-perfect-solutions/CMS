@@ -67,7 +67,7 @@ function AnitsTimetablePage() {
   if (isAdmin || isHod) {
     return (
       <div className="space-y-4">
-        <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs flex items-center justify-between">
+        <div className="bg-card p-4 rounded-xl border border-border/60 shadow-xs flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-foreground">
               {isHod ? `${department || "Department"} Timetable Management` : "ANITS Master Timetable Management"}
@@ -140,7 +140,7 @@ function AnitsTimetablePage() {
   // 3. STUDENT: Personal Weekly Class Schedule
   return (
     <div className="space-y-4">
-      <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs">
+      <div className="bg-card p-4 rounded-xl border border-border/60 shadow-xs">
         <h2 className="text-lg font-bold text-foreground">My Weekly Class Schedule</h2>
         <p className="text-xs text-muted-foreground">
           Authoritative class timetable retrieved directly from ANITS MasterTimetable for your enrolled branch and semester.
