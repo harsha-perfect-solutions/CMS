@@ -163,13 +163,22 @@ function AnitsDashboardPage() {
     const deptCode = hod.departmentCode || "CSE";
     const deptName = hod.departmentName || "Department";
     const hodName = hod.name || "Head of Department";
-    const todayClasses = data?.todayClasses || [];
-    const facultyAtt = data?.facultyAttendanceToday || [];
-    const classWise = data?.classWiseAttendance || [];
-    const trend = data?.attendanceTrend || [];
+    const todayClasses: any[] = Array.isArray(data?.todayClasses) ? data.todayClasses : [];
+    const facultyAtt: any[] = Array.isArray(data?.facultyAttendanceToday) ? data.facultyAttendanceToday : [];
+    const classWise: any[] = Array.isArray(data?.classWiseAttendance) ? data.classWiseAttendance : [];
     const alerts = data?.alerts || {};
 
-    const hasTrendData = trend.some((t: any) => (t.total || 0) > 0);
+    // Defensively handle attendanceTrend whether returned as an Array or as an Object { hasTrendData, trend }
+    const trendRaw = data?.attendanceTrend;
+    const trend: any[] = Array.isArray(trendRaw)
+      ? trendRaw
+      : Array.isArray(trendRaw?.trend)
+      ? trendRaw.trend
+      : [];
+    const hasTrendData =
+      trendRaw?.hasTrendData !== undefined && trendRaw?.hasTrendData !== null
+        ? Boolean(trendRaw.hasTrendData && trend.length > 0)
+        : trend.some((t: any) => (t.totalSessions || t.total || 0) > 0);
 
     return (
       <div className="space-y-6">
@@ -386,20 +395,23 @@ function AnitsDashboardPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {trend.map((dayItem: any) => (
-                    <div key={dayItem.date} className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-medium text-foreground">{dayItem.day} ({dayItem.date})</span>
-                        <span className="font-bold text-blue-600">{dayItem.rate}%</span>
+                  {trend.map((dayItem: any) => {
+                    const rateVal = Number(dayItem.rate ?? dayItem.attendanceRate ?? 0);
+                    return (
+                      <div key={dayItem.date} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-medium text-foreground">{dayItem.day} ({dayItem.date})</span>
+                          <span className="font-bold text-blue-600">{rateVal}%</span>
+                        </div>
+                        <div className="w-full bg-muted/60 rounded-full h-2 overflow-hidden">
+                          <div
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            style={{ width: `${Math.min(100, Math.max(0, rateVal))}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="w-full bg-muted/60 rounded-full h-2 overflow-hidden">
-                        <div
-                          className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                          style={{ width: `${Math.min(100, Math.max(0, dayItem.rate))}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -480,47 +492,56 @@ function AnitsDashboardPage() {
               </div>
             ) : (
               <div className="divide-y divide-border/40">
-                {todayClasses.map((c: any) => (
-                  <div key={c.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/15 transition-colors">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-extrabold text-sm text-foreground">
-                          {c.subjectCode} - {c.subjectName}
-                        </span>
-                        {c.isLab && (
-                          <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20 font-bold">
-                            Laboratory
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Period {c.periodNumber} ({c.time}) &middot; Sem {c.semester} ({c.section}) &middot; Room {c.roomNo} &middot; <span className="font-semibold text-foreground">{c.facultyName}</span>
-                      </p>
-                    </div>
+                {todayClasses.map((c: any) => {
+                  const subjectCode = c.subjectCode || c.courseCode || "N/A";
+                  const subjectName = c.subjectName || c.courseName || "Assigned Lecture";
+                  const room = c.roomNo || c.room || "Room 101";
+                  const isSubmitted = c.attendanceStatus === "Attendance Submitted" || c.attendanceStatus === "Submitted";
+                  const isPending = c.attendanceStatus === "Attendance Pending" || c.attendanceStatus === "Pending";
+                  const isOngoing = c.status === "Ongoing";
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      <Badge
-                        variant="outline"
-                        className={`text-xs py-1 px-2.5 font-bold ${
-                          c.attendanceStatus === "Attendance Submitted"
-                            ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                            : c.attendanceStatus === "Attendance Pending"
-                            ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
-                            : c.attendanceStatus === "Ongoing"
-                            ? "bg-blue-500/10 text-blue-600 border-blue-500/20"
-                            : "bg-muted text-muted-foreground border-border/60"
-                        }`}
-                      >
-                        {c.attendanceStatus}
-                      </Badge>
-                      <Button asChild size="sm" variant="ghost" className="rounded-lg text-xs font-semibold text-blue-600 hover:text-blue-700">
-                        <Link to={"/anits/attendance" as any}>
-                          Ledger &rarr;
-                        </Link>
-                      </Button>
+                  return (
+                    <div key={c.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/15 transition-colors">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-extrabold text-sm text-foreground">
+                            {subjectCode} - {subjectName}
+                          </span>
+                          {c.isLab && (
+                            <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20 font-bold">
+                              Laboratory
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Period {c.periodNumber} ({c.time}) &middot; Sem {c.semester} ({c.section}) &middot; Room {room} &middot; <span className="font-semibold text-foreground">{c.facultyName}</span>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs py-1 px-2.5 font-bold ${
+                            isSubmitted
+                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                              : isPending
+                              ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                              : isOngoing
+                              ? "bg-blue-500/10 text-blue-600 border-blue-500/20"
+                              : "bg-muted text-muted-foreground border-border/60"
+                          }`}
+                        >
+                          {isSubmitted ? "Attendance Submitted" : isPending ? "Attendance Pending" : (c.attendanceStatus || "Pending")}
+                        </Badge>
+                        <Button asChild size="sm" variant="ghost" className="rounded-lg text-xs font-semibold text-blue-600 hover:text-blue-700">
+                          <Link to={"/anits/attendance" as any}>
+                            Ledger &rarr;
+                          </Link>
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -545,26 +566,30 @@ function AnitsDashboardPage() {
                 </div>
               ) : (
                 <div className="divide-y divide-border/40">
-                  {facultyAtt.map((f: any) => (
-                    <div key={f.facultyId} className="p-3.5 px-5 flex items-center justify-between gap-3 hover:bg-muted/10">
-                      <div>
-                        <p className="font-bold text-xs text-foreground">{f.facultyName}</p>
-                        <p className="text-[11px] text-muted-foreground">{f.periodsToday} period(s) scheduled today</p>
+                  {facultyAtt.map((f: any) => {
+                    const periodsCount = f.periodsToday ?? f.scheduledPeriods ?? 0;
+                    const statusStr = f.status || (periodsCount === 0 ? "No Classes Today" : f.attendanceStatus === "All Submitted" ? "Present" : "Pending");
+                    return (
+                      <div key={f.facultyId} className="p-3.5 px-5 flex items-center justify-between gap-3 hover:bg-muted/10">
+                        <div>
+                          <p className="font-bold text-xs text-foreground">{f.facultyName}</p>
+                          <p className="text-[11px] text-muted-foreground">{periodsCount} period(s) scheduled today</p>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] font-bold ${
+                            statusStr === "Present" || statusStr === "All Submitted"
+                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                              : statusStr === "On Duty" || statusStr === "Partially Submitted"
+                              ? "bg-blue-500/10 text-blue-600 border-blue-500/20"
+                              : "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                          }`}
+                        >
+                          {statusStr}
+                        </Badge>
                       </div>
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] font-bold ${
-                          f.status === "Present"
-                            ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                            : f.status === "On Duty"
-                            ? "bg-blue-500/10 text-blue-600 border-blue-500/20"
-                            : "bg-amber-500/10 text-amber-600 border-amber-500/20"
-                        }`}
-                      >
-                        {f.status}
-                      </Badge>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -590,7 +615,7 @@ function AnitsDashboardPage() {
                       Attendance Shortage Notice
                     </p>
                     <p className="text-rose-700 dark:text-rose-300 mt-0.5">
-                      {alerts.shortageStudentsCount ?? 0} students in {deptCode} currently fall below the required 75% ANITS cutoff.
+                      {alerts.shortageStudentsCount ?? alerts.studentsBelowThreshold ?? 0} students in {deptCode} currently fall below the required 75% ANITS cutoff.
                     </p>
                   </div>
                   <Button asChild size="sm" variant="ghost" className="text-xs text-rose-700 hover:text-rose-800 font-bold shrink-0">
@@ -608,7 +633,7 @@ function AnitsDashboardPage() {
                       Pending Attendance Rosters
                     </p>
                     <p className="text-amber-700 dark:text-amber-300 mt-0.5">
-                      {alerts.pendingAttendanceClassesCount ?? 0} teaching slots today awaiting faculty attendance submission.
+                      {alerts.pendingAttendanceClassesCount ?? alerts.pendingAttendanceSessions ?? alerts.pendingSessionsCount ?? 0} teaching slots today awaiting faculty attendance submission.
                     </p>
                   </div>
                   <Button asChild size="sm" variant="ghost" className="text-xs text-amber-700 hover:text-amber-800 font-bold shrink-0">

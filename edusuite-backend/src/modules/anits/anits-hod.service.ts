@@ -214,7 +214,9 @@ export class AnitsHodService {
         date,
         day: new Date(date).toLocaleDateString("en-US", { weekday: "short" }),
         attendanceRate: rate,
+        rate,
         totalSessions: item.total,
+        total: item.total,
       };
     });
 
@@ -291,10 +293,13 @@ export class AnitsHodService {
         section: slot.section,
         courseCode: slot.course?.code || "N/A",
         courseName: slot.course?.name || "Assigned Lecture",
+        subjectCode: slot.course?.code || "N/A",
+        subjectName: slot.course?.name || "Assigned Lecture",
         facultyName: slot.faculty?.name || "Faculty Member",
         room: slot.roomNo || "Room 101",
+        roomNo: slot.roomNo || "Room 101",
         status,
-        attendanceStatus: isSubmitted ? "Submitted" : "Pending",
+        attendanceStatus: isSubmitted ? "Attendance Submitted" : "Attendance Pending",
       };
     });
 
@@ -316,6 +321,7 @@ export class AnitsHodService {
         facultyName: fac.name,
         rollNumber: fac.rollNumber,
         scheduledPeriods: facTodaySlots.length,
+        periodsToday: facTodaySlots.length,
         conductedPeriods: conductedCount,
         pendingPeriods: Math.max(0, facTodaySlots.length - conductedCount),
         attendanceStatus:
@@ -325,6 +331,12 @@ export class AnitsHodService {
             ? "All Submitted"
             : conductedCount > 0
             ? "Partially Submitted"
+            : "Pending",
+        status:
+          facTodaySlots.length === 0
+            ? "No Classes Today"
+            : conductedCount === facTodaySlots.length
+            ? "Present"
             : "Pending",
       };
     });
@@ -374,7 +386,8 @@ export class AnitsHodService {
         lateRecords,
         absentRecords,
       },
-      attendanceTrend: {
+      attendanceTrend,
+      attendanceTrendDetails: {
         hasTrendData: attendanceTrend.length > 0,
         trend: attendanceTrend,
       },
@@ -383,7 +396,10 @@ export class AnitsHodService {
       facultyAttendanceToday,
       alerts: {
         studentsBelowThreshold: shortageStudentsCount,
+        shortageStudentsCount,
         pendingAttendanceSessions: pendingTodaySessionsCount,
+        pendingAttendanceClassesCount: pendingTodaySessionsCount,
+        pendingSessionsCount: pendingTodaySessionsCount,
       },
     };
   }
