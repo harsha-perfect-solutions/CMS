@@ -7,7 +7,6 @@ import {
   Users,
   GraduationCap,
   Layers,
-  DoorOpen,
   FileBarChart,
   UserCheck,
   Clock,
@@ -58,7 +57,6 @@ export function AnitsSidebar({
           { label: "Classes & Cohorts", href: "/anits/my-classes", icon: BookOpen },
           { label: "Faculty", href: "/anits/faculty", icon: Users },
           { label: "Students", href: "/anits/students", icon: GraduationCap },
-          { label: "Rooms", href: "/anits/timetable?tab=rooms", icon: DoorOpen },
           { label: "Reports", href: "/anits/reports", icon: FileBarChart },
           { label: "Profile", href: "/anits/profile", icon: User },
         ];

@@ -26,10 +26,17 @@ export const Route = createFileRoute("/anits/timetable")({
   head: () => ({
     meta: [{ title: "Timetable Management — ANITS" }],
   }),
+  validateSearch: (search: Record<string, unknown>) => {
+    return {
+      tab: (search.tab as string) || undefined,
+    };
+  },
   component: AnitsTimetablePage,
 });
 
 function AnitsTimetablePage() {
+  const searchParams = Route.useSearch();
+  const initialTab = searchParams.tab === "rooms" || searchParams.tab === "room" ? "room" : "grid";
   const { role, department } = useRole();
 
   // Determine user persona
@@ -79,7 +86,7 @@ function AnitsTimetablePage() {
             </p>
           </div>
         </div>
-        <TimetableModuleView />
+        <TimetableModuleView initialTab={initialTab} />
       </div>
     );
   }

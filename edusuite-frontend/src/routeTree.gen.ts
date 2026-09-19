@@ -89,6 +89,7 @@ import { Route as AnitsLoginRouteImport } from './routes/anits.login'
 import { Route as AnitsMyClassesRouteImport } from './routes/anits.my-classes'
 import { Route as AnitsProfileRouteImport } from './routes/anits.profile'
 import { Route as AnitsReportsRouteImport } from './routes/anits.reports'
+import { Route as AnitsRoomsRouteImport } from './routes/anits.rooms'
 import { Route as AnitsStudentsRouteImport } from './routes/anits.students'
 import { Route as AnitsTimetableRouteImport } from './routes/anits.timetable'
 import { Route as DashboardAdmissionRouteImport } from './routes/dashboard.admission'
@@ -1054,6 +1055,11 @@ const AnitsProfileRoute = AnitsProfileRouteImport.update({
 const AnitsReportsRoute = AnitsReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsRoomsRoute = AnitsRoomsRouteImport.update({
+  id: '/rooms',
+  path: '/rooms',
   getParentRoute: () => AnitsRoute,
 } as any)
 const AnitsStudentsRoute = AnitsStudentsRouteImport.update({
@@ -4270,6 +4276,7 @@ export interface FileRoutesByFullPath {
   '/anits/my-classes': typeof AnitsMyClassesRoute
   '/anits/profile': typeof AnitsProfileRoute
   '/anits/reports': typeof AnitsReportsRoute
+  '/anits/rooms': typeof AnitsRoomsRoute
   '/anits/students': typeof AnitsStudentsRoute
   '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
@@ -4896,6 +4903,7 @@ export interface FileRoutesByTo {
   '/anits/my-classes': typeof AnitsMyClassesRoute
   '/anits/profile': typeof AnitsProfileRoute
   '/anits/reports': typeof AnitsReportsRoute
+  '/anits/rooms': typeof AnitsRoomsRoute
   '/anits/students': typeof AnitsStudentsRoute
   '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
@@ -5533,6 +5541,7 @@ export interface FileRoutesById {
   '/anits/my-classes': typeof AnitsMyClassesRoute
   '/anits/profile': typeof AnitsProfileRoute
   '/anits/reports': typeof AnitsReportsRoute
+  '/anits/rooms': typeof AnitsRoomsRoute
   '/anits/students': typeof AnitsStudentsRoute
   '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
@@ -6180,6 +6189,7 @@ export interface FileRouteTypes {
     | '/anits/my-classes'
     | '/anits/profile'
     | '/anits/reports'
+    | '/anits/rooms'
     | '/anits/students'
     | '/anits/timetable'
     | '/dashboard/admission'
@@ -6806,6 +6816,7 @@ export interface FileRouteTypes {
     | '/anits/my-classes'
     | '/anits/profile'
     | '/anits/reports'
+    | '/anits/rooms'
     | '/anits/students'
     | '/anits/timetable'
     | '/dashboard/admission'
@@ -7442,6 +7453,7 @@ export interface FileRouteTypes {
     | '/anits/my-classes'
     | '/anits/profile'
     | '/anits/reports'
+    | '/anits/rooms'
     | '/anits/students'
     | '/anits/timetable'
     | '/dashboard/admission'
@@ -8636,6 +8648,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/anits/reports'
       preLoaderRoute: typeof AnitsReportsRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/rooms': {
+      id: '/anits/rooms'
+      path: '/rooms'
+      fullPath: '/anits/rooms'
+      preLoaderRoute: typeof AnitsRoomsRouteImport
       parentRoute: typeof AnitsRoute
     }
     '/anits/students': {
@@ -12619,6 +12638,7 @@ interface AnitsRouteChildren {
   AnitsMyClassesRoute: typeof AnitsMyClassesRoute
   AnitsProfileRoute: typeof AnitsProfileRoute
   AnitsReportsRoute: typeof AnitsReportsRoute
+  AnitsRoomsRoute: typeof AnitsRoomsRoute
   AnitsStudentsRoute: typeof AnitsStudentsRoute
   AnitsTimetableRoute: typeof AnitsTimetableRoute
 }
@@ -12632,6 +12652,7 @@ const AnitsRouteChildren: AnitsRouteChildren = {
   AnitsMyClassesRoute: AnitsMyClassesRoute,
   AnitsProfileRoute: AnitsProfileRoute,
   AnitsReportsRoute: AnitsReportsRoute,
+  AnitsRoomsRoute: AnitsRoomsRoute,
   AnitsStudentsRoute: AnitsStudentsRoute,
   AnitsTimetableRoute: AnitsTimetableRoute,
 }

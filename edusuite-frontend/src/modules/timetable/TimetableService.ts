@@ -158,3 +158,53 @@ export async function updateTimetablePeriod(
   const res = await api.put("/api/academics/timetable/update-period", periodData);
   return res.data;
 }
+
+export interface RoomAssignment {
+  id: string;
+  day: string;
+  periodNumber: number;
+  startTime: string;
+  endTime: string;
+  courseCode: string;
+  courseName: string;
+  facultyName: string;
+  branch: string;
+  semester: number;
+  section: string;
+  isLab: boolean;
+}
+
+export interface RoomAllocationItem {
+  roomNo: string;
+  building: string;
+  isLab: boolean;
+  capacity: number;
+  totalPeriods: number;
+  hasConflict: boolean;
+  conflictDetails?: string | null;
+  assignments: RoomAssignment[];
+}
+
+export async function fetchRoomAllocations(params?: {
+  branch?: string;
+  day?: string;
+  isLab?: boolean;
+  academicYear?: string;
+}): Promise<{ totalRooms: number; rooms: RoomAllocationItem[] }> {
+  try {
+    const res = await api.get("/api/academics/timetable/rooms", {
+      params,
+    });
+    if (res && res.data) {
+      return {
+        totalRooms: res.data.totalRooms || 0,
+        rooms: Array.isArray(res.data.rooms) ? res.data.rooms : [],
+      };
+    }
+  } catch (err) {
+    console.error("Failed to fetch room allocations from PostgreSQL:", err);
+  }
+
+  return { totalRooms: 0, rooms: [] };
+}
+

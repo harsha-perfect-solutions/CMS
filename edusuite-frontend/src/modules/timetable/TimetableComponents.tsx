@@ -25,6 +25,8 @@ import {
   X,
   Bot,
   Zap,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -53,6 +55,7 @@ import {
   autoGenerateTimetable,
   updateTimetablePeriod,
   checkScheduleConflict,
+  fetchRoomAllocations,
   BRANCHES,
   SEMESTERS,
   SECTIONS,
@@ -60,6 +63,7 @@ import {
   PERIOD_SLOTS,
   type TimetablePeriod,
   type TimetableGrid,
+  type RoomAllocationItem,
 } from "./TimetableService";
 
 interface TimetableModuleViewProps {
@@ -67,6 +71,7 @@ interface TimetableModuleViewProps {
   initialSem?: number;
   initialSec?: string;
   isStudentView?: boolean;
+  initialTab?: "grid" | "faculty" | "room";
 }
 
 export function TimetableModuleView({
@@ -74,6 +79,7 @@ export function TimetableModuleView({
   initialSem = 5,
   initialSec = "Section A",
   isStudentView = false,
+  initialTab = "grid",
 }: TimetableModuleViewProps = {}) {
   const { role, flags, department: userDept, profile } = useRole();
   const isHod = role === "hod" || flags?.includes("isHod");
@@ -89,12 +95,47 @@ export function TimetableModuleView({
     }
   }, [isHod, hodDept]);
 
-  const [viewMode, setViewMode] = useState<"grid" | "faculty" | "room">("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "faculty" | "room">(initialTab);
   const [selectedFacultyFilter, setSelectedFacultyFilter] = useState("Dr. K. Sai Teja");
+
+  useEffect(() => {
+    if (initialTab) {
+      setViewMode(initialTab);
+    }
+  }, [initialTab]);
 
   const [gridData, setGridData] = useState<TimetableGrid | null>(null);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+
+  // Room Allocation Database State
+  const [roomAllocations, setRoomAllocations] = useState<RoomAllocationItem[]>([]);
+  const [roomLoading, setRoomLoading] = useState(false);
+  const [roomSearchQuery, setRoomSearchQuery] = useState("");
+  const [roomDayFilter, setRoomDayFilter] = useState("ALL");
+  const [roomTypeFilter, setRoomTypeFilter] = useState<"ALL" | "CLASSROOM" | "LAB">("ALL");
+  const [roomConflictFilter, setRoomConflictFilter] = useState<"ALL" | "CONFLICTS">("ALL");
+  const [expandedRoomNo, setExpandedRoomNo] = useState<string | null>(null);
+
+  const loadRooms = async () => {
+    setRoomLoading(true);
+    try {
+      const res = await fetchRoomAllocations({
+        branch: isHod ? hodDept : undefined,
+      });
+      setRoomAllocations(res.rooms);
+    } catch (e) {
+      console.error("Failed to load room allocations:", e);
+    } finally {
+      setRoomLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (viewMode === "room") {
+      loadRooms();
+    }
+  }, [viewMode]);
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -147,6 +188,20 @@ export function TimetableModuleView({
     const conflict = checkScheduleConflict(gridData.schedule, updated);
     if (conflict.hasConflict) {
       setClashWarning(conflict.conflictReason || "Faculty clash detected!");
+    } else {
+      setClashWarning(null);
+    }
+  };
+
+  // Handle live room clash detection during manual edits
+  const handleRoomChange = (newRoom: string) => {
+    if (!editingPeriod || !gridData) return;
+    const updated = { ...editingPeriod, roomNo: newRoom };
+    setEditingPeriod(updated);
+
+    const conflict = checkScheduleConflict(gridData.schedule, updated);
+    if (conflict.hasConflict) {
+      setClashWarning(conflict.conflictReason || "Room clash detected!");
     } else {
       setClashWarning(null);
     }
@@ -661,29 +716,314 @@ export function TimetableModuleView({
       )}
 
       {/* VIEW 3: ROOM ALLOCATION VIEW */}
-      {viewMode === "room" && (
-        <div className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-sm">
-          <div className="border-b border-border pb-3">
-            <h2 className="text-base font-bold text-foreground flex items-center gap-2">
-              <Building2 className="size-4 text-primary" /> Classroom & Laboratory Occupancy Schedule
-            </h2>
-            <p className="text-xs text-muted-foreground">Inspect classroom utilization and lab room availability across campus blocks.</p>
-          </div>
+      {viewMode === "room" && (() => {
+        const totalRooms = roomAllocations.length;
+        const totalLabs = roomAllocations.filter((r) => r.isLab).length;
+        const totalClassrooms = totalRooms - totalLabs;
+        const totalConflicts = roomAllocations.filter((r) => r.hasConflict).length;
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {["Block B - 302", "Block C - 201", "Lab - AI Center", "Lab - CSE 2", "Lab - ECE 1"].map((room) => (
-              <div key={room} className="p-4 rounded-2xl border border-border/80 bg-card space-y-2 shadow-xs">
-                <div className="flex items-center justify-between border-b border-border/60 pb-2">
-                  <h3 className="font-bold text-xs text-foreground font-mono">{room}</h3>
-                  <Badge className="bg-emerald-500/10 text-emerald-600 text-[0.68rem]">Active Utilization</Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">Current Occupancy: <strong className="text-foreground">CSE - Sem 5 (Sec A)</strong></p>
-                <p className="text-[0.68rem] font-mono text-primary">Capacity: 60 Seats • Air-Conditioned</p>
+        const filteredRooms = roomAllocations.filter((room) => {
+          if (roomSearchQuery.trim()) {
+            const q = roomSearchQuery.toLowerCase().trim();
+            const matchRoom = room.roomNo.toLowerCase().includes(q);
+            const matchBuilding = room.building.toLowerCase().includes(q);
+            const matchAssignment = room.assignments.some(
+              (a) =>
+                a.courseCode.toLowerCase().includes(q) ||
+                a.courseName.toLowerCase().includes(q) ||
+                a.facultyName.toLowerCase().includes(q) ||
+                a.branch.toLowerCase().includes(q) ||
+                a.section.toLowerCase().includes(q)
+            );
+            if (!matchRoom && !matchBuilding && !matchAssignment) return false;
+          }
+
+          if (roomDayFilter !== "ALL") {
+            const hasDay = room.assignments.some((a) => a.day === roomDayFilter);
+            if (!hasDay) return false;
+          }
+
+          if (roomTypeFilter === "CLASSROOM" && room.isLab) return false;
+          if (roomTypeFilter === "LAB" && !room.isLab) return false;
+
+          if (roomConflictFilter === "CONFLICTS" && !room.hasConflict) return false;
+
+          return true;
+        });
+
+        return (
+          <div className="rounded-2xl border border-border/80 bg-card p-5 space-y-6 shadow-sm">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-border pb-4">
+              <div>
+                <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <Building2 className="size-5 text-primary" /> Campus Classroom & Laboratory Occupancy
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Authoritative institutional room allocation, occupancy matrix, and live clash detection directly from PostgreSQL MasterTimetable.
+                </p>
               </div>
-            ))}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={loadRooms}
+                disabled={roomLoading}
+                className="h-8.5 text-xs font-semibold gap-2 rounded-xl shrink-0"
+              >
+                <RefreshCw className={`size-3.5 ${roomLoading ? "animate-spin" : ""}`} />
+                Refresh Room Data
+              </Button>
+            </div>
+
+            {/* KPI Stat Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-xl border border-border/70 bg-card/60 space-y-1 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-wider">Total Rooms</span>
+                  <Building2 className="size-4 text-primary" />
+                </div>
+                <p className="text-xl font-black text-foreground font-mono">{totalRooms}</p>
+                <p className="text-[0.68rem] text-muted-foreground">Configured across all blocks</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-border/70 bg-card/60 space-y-1 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-wider">Classrooms</span>
+                  <BookOpen className="size-4 text-blue-500" />
+                </div>
+                <p className="text-xl font-black text-foreground font-mono">{totalClassrooms}</p>
+                <p className="text-[0.68rem] text-muted-foreground">Theory lecture halls</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-border/70 bg-card/60 space-y-1 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-wider">Laboratories</span>
+                  <FlaskConical className="size-4 text-amber-500" />
+                </div>
+                <p className="text-xl font-black text-foreground font-mono">{totalLabs}</p>
+                <p className="text-[0.68rem] text-muted-foreground">Hands-on practical labs</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-border/70 bg-card/60 space-y-1 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[0.7rem] font-semibold text-muted-foreground uppercase tracking-wider">Clash Status</span>
+                  {totalConflicts === 0 ? (
+                    <CheckCircle2 className="size-4 text-emerald-500" />
+                  ) : (
+                    <AlertTriangle className="size-4 text-destructive animate-pulse" />
+                  )}
+                </div>
+                <p className={`text-xl font-black font-mono ${totalConflicts === 0 ? "text-emerald-600" : "text-destructive"}`}>
+                  {totalConflicts === 0 ? "0 Clashes" : `${totalConflicts} Clashing`}
+                </p>
+                <p className="text-[0.68rem] text-muted-foreground">
+                  {totalConflicts === 0 ? "All allocations conflict-free" : "Immediate review required"}
+                </p>
+              </div>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3 rounded-xl bg-muted/40 border border-border/70">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={roomSearchQuery}
+                  onChange={(e) => setRoomSearchQuery(e.target.value)}
+                  placeholder="Search by room (e.g. Block C - 151, Lab - CSE 1), course, or faculty..."
+                  className="h-9 pl-9 text-xs rounded-xl bg-card border-border/80"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Day Filter */}
+                <Select value={roomDayFilter} onValueChange={setRoomDayFilter}>
+                  <SelectTrigger className="h-9 text-xs rounded-xl w-[125px] bg-card">
+                    <SelectValue placeholder="Day" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL" className="text-xs">All Days</SelectItem>
+                    {DAYS.map((d) => (
+                      <SelectItem key={d} value={d} className="text-xs">{d}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {/* Type Filter */}
+                <Select value={roomTypeFilter} onValueChange={(v: any) => setRoomTypeFilter(v)}>
+                  <SelectTrigger className="h-9 text-xs rounded-xl w-[130px] bg-card">
+                    <SelectValue placeholder="Room Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL" className="text-xs">All Room Types</SelectItem>
+                    <SelectItem value="CLASSROOM" className="text-xs">Classrooms</SelectItem>
+                    <SelectItem value="LAB" className="text-xs">Laboratories</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Conflict Filter */}
+                <Select value={roomConflictFilter} onValueChange={(v: any) => setRoomConflictFilter(v)}>
+                  <SelectTrigger className="h-9 text-xs rounded-xl w-[125px] bg-card">
+                    <SelectValue placeholder="Conflict" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL" className="text-xs">All Health</SelectItem>
+                    <SelectItem value="CONFLICTS" className="text-xs text-destructive font-semibold">Clashes Only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Room List Grid */}
+            {roomLoading ? (
+              <div className="py-16 text-center space-y-2">
+                <RefreshCw className="size-8 animate-spin mx-auto text-primary" />
+                <p className="text-xs text-muted-foreground font-medium">Loading live room allocations from PostgreSQL...</p>
+              </div>
+            ) : filteredRooms.length === 0 ? (
+              <div className="py-12 text-center space-y-2 border border-dashed border-border/80 rounded-2xl bg-card">
+                <Building2 className="size-8 text-muted-foreground/50 mx-auto" />
+                <p className="text-sm font-bold text-foreground">No matching rooms found</p>
+                <p className="text-xs text-muted-foreground">Try clearing or adjusting your search query or filters.</p>
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredRooms.map((room) => {
+                  const isExpanded = expandedRoomNo === room.roomNo;
+                  const relevantAssignments =
+                    roomDayFilter === "ALL"
+                      ? room.assignments
+                      : room.assignments.filter((a) => a.day === roomDayFilter);
+
+                  return (
+                    <div
+                      key={room.roomNo}
+                      className={`p-4 rounded-2xl border transition-all duration-200 bg-card space-y-3 shadow-xs ${
+                        room.hasConflict
+                          ? "border-destructive/60 bg-destructive/5 dark:bg-destructive/10"
+                          : "border-border/80 hover:border-primary/40"
+                      }`}
+                    >
+                      {/* Top Bar */}
+                      <div className="flex items-start justify-between gap-2 border-b border-border/60 pb-2.5">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            {room.isLab ? (
+                              <FlaskConical className="size-4 text-amber-500 shrink-0" />
+                            ) : (
+                              <Building2 className="size-4 text-primary shrink-0" />
+                            )}
+                            <h3 className="font-bold text-sm text-foreground font-mono">{room.roomNo}</h3>
+                          </div>
+                          <p className="text-[0.7rem] text-muted-foreground mt-0.5">{room.building}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge
+                            className={`text-[0.65rem] font-bold ${
+                              room.isLab
+                                ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20"
+                                : "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20"
+                            }`}
+                          >
+                            {room.isLab ? "Laboratory" : "Classroom"}
+                          </Badge>
+                          <span className="text-[0.65rem] text-muted-foreground font-mono">
+                            Cap: {room.capacity} seats
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Conflict Alert Banner */}
+                      {room.hasConflict && (
+                        <div className="p-2 rounded-xl bg-destructive/15 border border-destructive/30 text-destructive text-[0.72rem] font-bold flex items-center gap-1.5">
+                          <AlertTriangle className="size-3.5 shrink-0" />
+                          <span className="truncate">{room.conflictDetails || "Room clash detected!"}</span>
+                        </div>
+                      )}
+
+                      {/* Summary Metrics */}
+                      <div className="flex items-center justify-between text-xs py-1">
+                        <span className="text-muted-foreground">Allocated Slots:</span>
+                        <Badge variant="outline" className="text-[0.68rem] font-mono">
+                          {room.totalPeriods} Periods / Week
+                        </Badge>
+                      </div>
+
+                      {/* Occupancy Preview / Distinct Classes */}
+                      <div className="space-y-1">
+                        <p className="text-[0.68rem] text-muted-foreground uppercase font-bold tracking-wider">
+                          Active Assigned Courses
+                        </p>
+                        {room.assignments.length === 0 ? (
+                          <p className="text-xs text-muted-foreground italic">No timetable periods assigned</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {Array.from(
+                              new Set(room.assignments.map((a) => `${a.courseCode} (${a.branch}-${a.section})`))
+                            )
+                              .slice(0, 3)
+                              .map((item) => (
+                                <span
+                                  key={item}
+                                  className="text-[0.65rem] px-2 py-0.5 rounded-md bg-muted/60 text-foreground border border-border/50 font-medium"
+                                >
+                                  {item}
+                                </span>
+                              ))}
+                            {new Set(room.assignments.map((a) => a.courseCode)).size > 3 && (
+                              <span className="text-[0.65rem] px-1.5 py-0.5 text-muted-foreground">
+                                +{new Set(room.assignments.map((a) => a.courseCode)).size - 3} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Expand / Collapse Button */}
+                      {room.assignments.length > 0 && (
+                        <div className="pt-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setExpandedRoomNo(isExpanded ? null : room.roomNo)}
+                            className="w-full h-8 text-[0.7rem] font-bold text-primary flex items-center justify-between rounded-xl hover:bg-primary/5"
+                          >
+                            <span>{isExpanded ? "Hide Period Schedule" : `View Period Schedule (${relevantAssignments.length})`}</span>
+                            {isExpanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                          </Button>
+
+                          {/* Expanded Detailed Schedule List */}
+                          {isExpanded && (
+                            <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto pr-1 border-t border-border/60 pt-2 no-scrollbar">
+                              {relevantAssignments.map((a) => (
+                                <div
+                                  key={a.id}
+                                  className="p-2 rounded-xl bg-muted/40 border border-border/40 text-[0.7rem] space-y-0.5"
+                                >
+                                  <div className="flex items-center justify-between font-semibold">
+                                    <span className="text-foreground">
+                                      {a.day} • P{a.periodNumber} ({a.startTime})
+                                    </span>
+                                    <span className="text-primary font-mono">{a.courseCode}</span>
+                                  </div>
+                                  <p className="text-muted-foreground truncate">{a.courseName}</p>
+                                  <div className="flex items-center justify-between text-[0.65rem] text-muted-foreground pt-0.5">
+                                    <span>👨‍🏫 {a.facultyName}</span>
+                                    <span>{a.branch}-S{a.semester} ({a.section})</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* MODAL: EDIT PERIOD CELL & LIVE CLASH WARNING */}
       <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
@@ -735,7 +1075,7 @@ export function TimetableModuleView({
                 <Label className="text-xs font-semibold">Classroom / Laboratory Room No.</Label>
                 <Input
                   value={editingPeriod.roomNo || ""}
-                  onChange={(e) => setEditingPeriod({ ...editingPeriod, roomNo: e.target.value })}
+                  onChange={(e) => handleRoomChange(e.target.value)}
                   className="h-9 text-xs font-mono"
                 />
               </div>

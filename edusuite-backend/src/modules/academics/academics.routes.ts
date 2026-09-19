@@ -565,6 +565,131 @@ router.post("/curriculum", authenticateToken, requireSuperAdmin, async (req: Aut
 // 5. MASTER TIMETABLE APIS (POSTGRESQL SINGLE SOURCE OF TRUTH)
 // ==========================================
 
+// GET /api/academics/timetable/rooms & /api/timetable/rooms: Institution-wide room allocation schedule from PostgreSQL
+router.get(["/timetable/rooms", "/rooms"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userRole = (req.userRole || "").toLowerCase();
+    const authUserId = req.userId;
+    const academicYear = (req.query.academicYear as string) || "2026-27";
+    const requestedBranch = req.query.branch ? (req.query.branch as string).trim().toUpperCase() : undefined;
+    const requestedDay = req.query.day ? (req.query.day as string).trim() : undefined;
+    const isLabFilter = req.query.isLab !== undefined ? req.query.isLab === "true" : undefined;
+
+    let branchScope: string | undefined = undefined;
+
+    if (userRole === "hod") {
+      let hodDept = req.userDepartment;
+      if (!hodDept && authUserId) {
+        const fac = await prisma.faculty.findUnique({
+          where: { id: authUserId },
+          select: { department: true },
+        });
+        hodDept = fac?.department || "";
+      }
+      if (hodDept) {
+        branchScope = normalizeBranchCode(hodDept);
+      }
+    } else if (requestedBranch && requestedBranch !== "ALL") {
+      branchScope = normalizeBranchCode(requestedBranch);
+    }
+
+    const whereClause: any = {
+      roomNo: { not: null },
+      academicYear,
+    };
+    if (branchScope) {
+      whereClause.branch = branchScope;
+    }
+    if (requestedDay && requestedDay !== "ALL") {
+      whereClause.day = requestedDay;
+    }
+    if (isLabFilter !== undefined) {
+      whereClause.isLab = isLabFilter;
+    }
+
+    const records = await prisma.masterTimetable.findMany({
+      where: whereClause,
+      include: {
+        course: { select: { id: true, code: true, name: true } },
+        faculty: { select: { id: true, name: true, department: true } },
+      },
+      orderBy: [
+        { roomNo: "asc" },
+        { day: "asc" },
+        { periodNumber: "asc" },
+      ],
+    });
+
+    // Group records by roomNo
+    const roomMap = new Map<string, any>();
+
+    for (const r of records) {
+      const roomNo = r.roomNo ? r.roomNo.trim() : "";
+      if (!roomNo) continue;
+
+      if (!roomMap.has(roomNo)) {
+        const isLab = r.isLab || roomNo.toLowerCase().includes("lab");
+        let building = "Academic Block";
+        if (roomNo.includes("Block A")) building = "Block A (AI & Data Science)";
+        else if (roomNo.includes("Block B")) building = "Block B (Central Administration)";
+        else if (roomNo.includes("Block C")) building = "Block C (Computer Science & Civil)";
+        else if (roomNo.includes("Block E")) building = "Block E (Electronics & Electrical)";
+        else if (roomNo.includes("Block I")) building = "Block I (Information Technology)";
+        else if (roomNo.includes("Block M")) building = "Block M (Mechanical Sciences)";
+        else if (roomNo.toLowerCase().includes("lab")) building = "Central Computing & Lab Complex";
+
+        roomMap.set(roomNo, {
+          roomNo,
+          building,
+          isLab,
+          capacity: isLab ? 36 : 60,
+          totalPeriods: 0,
+          hasConflict: false,
+          conflictDetails: null,
+          timeSlotKeys: new Set<string>(),
+          assignments: [],
+        });
+      }
+
+      const roomEntry = roomMap.get(roomNo);
+      const slotKey = `${r.day}-P${r.periodNumber}`;
+
+      if (roomEntry.timeSlotKeys.has(slotKey)) {
+        roomEntry.hasConflict = true;
+        roomEntry.conflictDetails = `Multiple classes scheduled on ${r.day} Period ${r.periodNumber}!`;
+      } else {
+        roomEntry.timeSlotKeys.add(slotKey);
+      }
+
+      roomEntry.totalPeriods += 1;
+      roomEntry.assignments.push({
+        id: r.id,
+        day: r.day,
+        periodNumber: r.periodNumber,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        courseCode: r.course?.code || "",
+        courseName: r.course?.name || "Assigned Lecture",
+        facultyName: r.faculty?.name || "Faculty Not Assigned",
+        branch: r.branch,
+        semester: r.semester,
+        section: r.section,
+        isLab: r.isLab,
+      });
+    }
+
+    const results = Array.from(roomMap.values()).map(({ timeSlotKeys, ...rest }) => rest);
+
+    return res.json({
+      academicYear,
+      totalRooms: results.length,
+      rooms: results,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/academics/timetable & /api/timetable: Fetch authoritative timetable with server-side RBAC
 router.get(["/timetable", "/"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
