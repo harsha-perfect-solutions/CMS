@@ -89,6 +89,7 @@ import { Route as AnitsLoginRouteImport } from './routes/anits.login'
 import { Route as AnitsMyClassesRouteImport } from './routes/anits.my-classes'
 import { Route as AnitsProfileRouteImport } from './routes/anits.profile'
 import { Route as AnitsReportsRouteImport } from './routes/anits.reports'
+import { Route as AnitsStudentsRouteImport } from './routes/anits.students'
 import { Route as AnitsTimetableRouteImport } from './routes/anits.timetable'
 import { Route as DashboardAdmissionRouteImport } from './routes/dashboard.admission'
 import { Route as DashboardLibrarianRouteImport } from './routes/dashboard.librarian'
@@ -1053,6 +1054,11 @@ const AnitsProfileRoute = AnitsProfileRouteImport.update({
 const AnitsReportsRoute = AnitsReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsStudentsRoute = AnitsStudentsRouteImport.update({
+  id: '/students',
+  path: '/students',
   getParentRoute: () => AnitsRoute,
 } as any)
 const AnitsTimetableRoute = AnitsTimetableRouteImport.update({
@@ -4264,6 +4270,7 @@ export interface FileRoutesByFullPath {
   '/anits/my-classes': typeof AnitsMyClassesRoute
   '/anits/profile': typeof AnitsProfileRoute
   '/anits/reports': typeof AnitsReportsRoute
+  '/anits/students': typeof AnitsStudentsRoute
   '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
   '/dashboard/librarian': typeof DashboardLibrarianRouteWithChildren
@@ -4889,6 +4896,7 @@ export interface FileRoutesByTo {
   '/anits/my-classes': typeof AnitsMyClassesRoute
   '/anits/profile': typeof AnitsProfileRoute
   '/anits/reports': typeof AnitsReportsRoute
+  '/anits/students': typeof AnitsStudentsRoute
   '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
   '/dashboard/pre-admission': typeof DashboardPreAdmissionRoute
@@ -5525,6 +5533,7 @@ export interface FileRoutesById {
   '/anits/my-classes': typeof AnitsMyClassesRoute
   '/anits/profile': typeof AnitsProfileRoute
   '/anits/reports': typeof AnitsReportsRoute
+  '/anits/students': typeof AnitsStudentsRoute
   '/anits/timetable': typeof AnitsTimetableRoute
   '/dashboard/admission': typeof DashboardAdmissionRoute
   '/dashboard/librarian': typeof DashboardLibrarianRouteWithChildren
@@ -6171,6 +6180,7 @@ export interface FileRouteTypes {
     | '/anits/my-classes'
     | '/anits/profile'
     | '/anits/reports'
+    | '/anits/students'
     | '/anits/timetable'
     | '/dashboard/admission'
     | '/dashboard/librarian'
@@ -6796,6 +6806,7 @@ export interface FileRouteTypes {
     | '/anits/my-classes'
     | '/anits/profile'
     | '/anits/reports'
+    | '/anits/students'
     | '/anits/timetable'
     | '/dashboard/admission'
     | '/dashboard/pre-admission'
@@ -7431,6 +7442,7 @@ export interface FileRouteTypes {
     | '/anits/my-classes'
     | '/anits/profile'
     | '/anits/reports'
+    | '/anits/students'
     | '/anits/timetable'
     | '/dashboard/admission'
     | '/dashboard/librarian'
@@ -8624,6 +8636,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/anits/reports'
       preLoaderRoute: typeof AnitsReportsRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/students': {
+      id: '/anits/students'
+      path: '/students'
+      fullPath: '/anits/students'
+      preLoaderRoute: typeof AnitsStudentsRouteImport
       parentRoute: typeof AnitsRoute
     }
     '/anits/timetable': {
@@ -12600,6 +12619,7 @@ interface AnitsRouteChildren {
   AnitsMyClassesRoute: typeof AnitsMyClassesRoute
   AnitsProfileRoute: typeof AnitsProfileRoute
   AnitsReportsRoute: typeof AnitsReportsRoute
+  AnitsStudentsRoute: typeof AnitsStudentsRoute
   AnitsTimetableRoute: typeof AnitsTimetableRoute
 }
 
@@ -12612,6 +12632,7 @@ const AnitsRouteChildren: AnitsRouteChildren = {
   AnitsMyClassesRoute: AnitsMyClassesRoute,
   AnitsProfileRoute: AnitsProfileRoute,
   AnitsReportsRoute: AnitsReportsRoute,
+  AnitsStudentsRoute: AnitsStudentsRoute,
   AnitsTimetableRoute: AnitsTimetableRoute,
 }
 

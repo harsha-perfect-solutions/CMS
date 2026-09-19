@@ -282,7 +282,7 @@ export function AnitsHeader({
                           key={s.id}
                           onClick={() => {
                             setSearchOpen(false);
-                            navigate({ to: "/anits/my-classes" as any, search: { tab: "students" } as any });
+                            navigate({ to: "/anits/students" as any, search: { search: s.rollNumber } as any });
                           }}
                           className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
                         >

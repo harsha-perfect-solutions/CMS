@@ -2527,4 +2527,694 @@ router.patch("/super-admin/faculty/:id/deactivate", authenticateToken, async (re
   }
 });
 
+// =========================================================================
+// SUPER ADMIN: STUDENT MANAGEMENT MODULE
+// =========================================================================
+
+// GET /api/anits/super-admin/students: Institution-wide Student Directory & Metrics
+router.get("/super-admin/students", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    // 1. Fetch institution-wide summary statistics concurrently from PostgreSQL
+    const [totalStudents, activeStudents, departments, validCohortStudents, rawSemesters, rawSections] = await Promise.all([
+      prisma.student.count(),
+      prisma.student.count({ where: { status: "Active" } }),
+      prisma.department.findMany({ select: { id: true, code: true, name: true }, orderBy: { code: "asc" } }),
+      prisma.student.count({
+        where: {
+          department: { not: null },
+          semester: { not: null },
+          section: { not: null },
+        },
+      }),
+      prisma.student.findMany({
+        where: { semester: { not: null } },
+        select: { semester: true },
+        distinct: ["semester"],
+        orderBy: { semester: "asc" },
+      }),
+      prisma.student.findMany({
+        where: { section: { not: null } },
+        select: { section: true },
+        distinct: ["section"],
+        orderBy: { section: "asc" },
+      }),
+    ]);
+
+    // 2. Build multi-filter WHERE clause
+    const where: any = {};
+
+    const searchQuery = ((req.query.search as string) || "").trim();
+    if (searchQuery) {
+      where.OR = [
+        { name: { contains: searchQuery, mode: "insensitive" } },
+        { rollNumber: { contains: searchQuery, mode: "insensitive" } },
+        { email: { contains: searchQuery, mode: "insensitive" } },
+        { department: { contains: searchQuery, mode: "insensitive" } },
+      ];
+    }
+
+    const deptFilter = ((req.query.department as string) || "").trim();
+    if (deptFilter && deptFilter !== "All" && deptFilter !== "All Departments") {
+      const matchingDepts = getMatchingDepartments(deptFilter);
+      where.department = { in: matchingDepts, mode: "insensitive" };
+    }
+
+    const semFilter = ((req.query.semester as string) || "").trim();
+    if (semFilter && semFilter !== "All" && semFilter !== "All Semesters") {
+      const semNum = parseInt(semFilter.replace(/[^0-9]/g, ""), 10);
+      if (!isNaN(semNum)) where.semester = semNum;
+    }
+
+    const secFilter = ((req.query.section as string) || "").trim();
+    if (secFilter && secFilter !== "All" && secFilter !== "All Sections") {
+      const cleanSec = secFilter.replace(/^Section\s+/i, "").trim().toUpperCase();
+      where.section = { in: [cleanSec, `Section ${cleanSec}`] };
+    }
+
+    const statusFilter = ((req.query.status as string) || "").trim();
+    if (statusFilter && statusFilter !== "All" && statusFilter !== "All Statuses") {
+      where.status = { equals: statusFilter, mode: "insensitive" };
+    }
+
+    // 3. Sorting options
+    const sortBy = ((req.query.sortBy as string) || "rollNumber").trim();
+    const sortOrder = ((req.query.sortOrder as string) || "asc").trim().toLowerCase() === "desc" ? "desc" : "asc";
+    const allowedSortFields = ["rollNumber", "name", "department", "semester", "status", "cgpa", "createdAt"];
+    const sortField = allowedSortFields.includes(sortBy) ? sortBy : "rollNumber";
+
+    // 4. Pagination
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string, 10) || 25));
+    const skip = (page - 1) * pageSize;
+
+    // 5. Query total count & paginated students from PostgreSQL
+    const [totalFiltered, students] = await Promise.all([
+      prisma.student.count({ where }),
+      prisma.student.findMany({
+        where,
+        select: {
+          id: true,
+          rollNumber: true,
+          name: true,
+          email: true,
+          department: true,
+          semester: true,
+          section: true,
+          year: true,
+          studentType: true,
+          cgpa: true,
+          creditsEarned: true,
+          feeStatus: true,
+          status: true,
+          parentId: true,
+          createdAt: true,
+        },
+        orderBy: { [sortField]: sortOrder },
+        skip,
+        take: pageSize,
+      }),
+    ]);
+
+    // 6. Aggregate attendance metrics for this page slice
+    const studentIds = students.map((s) => s.id);
+    const attendanceRecords = await prisma.attendanceRecord.findMany({
+      where: { userId: { in: studentIds } },
+      select: { userId: true, status: true },
+    });
+
+    const attMap = new Map<string, { total: number; present: number; absent: number; late: number }>();
+    for (const rec of attendanceRecords) {
+      if (!attMap.has(rec.userId)) {
+        attMap.set(rec.userId, { total: 0, present: 0, absent: 0, late: 0 });
+      }
+      const item = attMap.get(rec.userId)!;
+      item.total++;
+      const s = (rec.status || "").toLowerCase();
+      if (s === "present") item.present++;
+      else if (s === "absent") item.absent++;
+      else if (s === "late") item.late++;
+    }
+
+    const enrichedStudents = students.map((s) => {
+      const att = attMap.get(s.id) || { total: 0, present: 0, absent: 0, late: 0 };
+      const percentage = att.total > 0 ? Math.round(((att.present + att.late) / att.total) * 100) : 100;
+      const isShortage = att.total > 0 && percentage < 75;
+
+      return {
+        ...s,
+        attendance: {
+          totalSessions: att.total,
+          present: att.present,
+          absent: att.absent,
+          late: att.late,
+          percentage,
+          isShortage,
+          eligibility: percentage >= 75 ? "Eligible" : "Attendance Shortage",
+        },
+      };
+    });
+
+    return res.json({
+      summary: {
+        totalStudents,
+        activeStudents,
+        departmentsCount: departments.length,
+        validCohortStudents,
+      },
+      filterOptions: {
+        departments: departments.map((d) => ({ id: d.id, code: d.code, name: d.name })),
+        semesters: rawSemesters.map((s) => s.semester).filter((s): s is number => s !== null),
+        sections: rawSections.map((s) => s.section).filter((s): s is string => s !== null),
+        statuses: ["Active", "Inactive", "Suspended"],
+      },
+      students: enrichedStudents,
+      pagination: {
+        total: totalFiltered,
+        page,
+        pageSize,
+        totalPages: Math.ceil(totalFiltered / pageSize),
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to fetch student directory." });
+  }
+});
+
+// GET /api/anits/super-admin/students/export: Filter-aware CSV Export
+router.get("/super-admin/students/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const where: any = {};
+
+    const searchQuery = ((req.query.search as string) || "").trim();
+    if (searchQuery) {
+      where.OR = [
+        { name: { contains: searchQuery, mode: "insensitive" } },
+        { rollNumber: { contains: searchQuery, mode: "insensitive" } },
+        { email: { contains: searchQuery, mode: "insensitive" } },
+        { department: { contains: searchQuery, mode: "insensitive" } },
+      ];
+    }
+
+    const deptFilter = ((req.query.department as string) || "").trim();
+    if (deptFilter && deptFilter !== "All" && deptFilter !== "All Departments") {
+      const matchingDepts = getMatchingDepartments(deptFilter);
+      where.department = { in: matchingDepts, mode: "insensitive" };
+    }
+
+    const semFilter = ((req.query.semester as string) || "").trim();
+    if (semFilter && semFilter !== "All" && semFilter !== "All Semesters") {
+      const semNum = parseInt(semFilter.replace(/[^0-9]/g, ""), 10);
+      if (!isNaN(semNum)) where.semester = semNum;
+    }
+
+    const secFilter = ((req.query.section as string) || "").trim();
+    if (secFilter && secFilter !== "All" && secFilter !== "All Sections") {
+      const cleanSec = secFilter.replace(/^Section\s+/i, "").trim().toUpperCase();
+      where.section = { in: [cleanSec, `Section ${cleanSec}`] };
+    }
+
+    const statusFilter = ((req.query.status as string) || "").trim();
+    if (statusFilter && statusFilter !== "All" && statusFilter !== "All Statuses") {
+      where.status = { equals: statusFilter, mode: "insensitive" };
+    }
+
+    const students = await prisma.student.findMany({
+      where,
+      select: {
+        id: true,
+        rollNumber: true,
+        name: true,
+        email: true,
+        department: true,
+        semester: true,
+        section: true,
+        year: true,
+        studentType: true,
+        cgpa: true,
+        feeStatus: true,
+        status: true,
+      },
+      orderBy: { rollNumber: "asc" },
+    });
+
+    const studentIds = students.map((s) => s.id);
+    const attendanceRecords = await prisma.attendanceRecord.findMany({
+      where: { userId: { in: studentIds } },
+      select: { userId: true, status: true },
+    });
+
+    const attMap = new Map<string, { total: number; present: number; absent: number; late: number }>();
+    for (const rec of attendanceRecords) {
+      if (!attMap.has(rec.userId)) {
+        attMap.set(rec.userId, { total: 0, present: 0, absent: 0, late: 0 });
+      }
+      const item = attMap.get(rec.userId)!;
+      item.total++;
+      const s = (rec.status || "").toLowerCase();
+      if (s === "present") item.present++;
+      else if (s === "absent") item.absent++;
+      else if (s === "late") item.late++;
+    }
+
+    const headers = [
+      "Roll Number",
+      "Student Name",
+      "Email Address",
+      "Department",
+      "Semester",
+      "Section",
+      "Academic Year",
+      "Student Type",
+      "CGPA",
+      "Fee Status",
+      "Status",
+      "Conducted Sessions",
+      "Present",
+      "Absent",
+      "Late",
+      "Attendance Percentage",
+      "Eligibility Status",
+    ];
+
+    const rows = students.map((s) => {
+      const att = attMap.get(s.id) || { total: 0, present: 0, absent: 0, late: 0 };
+      const percentage = att.total > 0 ? Math.round(((att.present + att.late) / att.total) * 100) : 100;
+      const eligibility = percentage >= 75 ? "Eligible" : "Attendance Shortage";
+
+      return [
+        `"${s.rollNumber}"`,
+        `"${(s.name || "").replace(/"/g, '""')}"`,
+        `"${s.email}"`,
+        `"${s.department || ""}"`,
+        s.semester || "",
+        `"${s.section || ""}"`,
+        s.year ? `Year ${s.year}` : "",
+        `"${s.studentType || "Day Scholar"}"`,
+        s.cgpa ?? "",
+        `"${s.feeStatus || "Paid"}"`,
+        `"${s.status || "Active"}"`,
+        att.total,
+        att.present,
+        att.absent,
+        att.late,
+        `${percentage}%`,
+        `"${eligibility}"`,
+      ].join(",");
+    });
+
+    const csvContent = [headers.join(","), ...rows].join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="anits_students_${Date.now()}.csv"`);
+    return res.status(200).send(csvContent);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to export students." });
+  }
+});
+
+// GET /api/anits/super-admin/students/:id: Complete Student Profile & Linked Modules
+router.get("/super-admin/students/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: {
+        parent: {
+          select: {
+            id: true,
+            rollNumber: true,
+            name: true,
+            email: true,
+            department: true,
+            status: true,
+          },
+        },
+        courseRegistrations: {
+          include: {
+            course: true,
+          },
+        },
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    // 1. Fetch attendance records for this student
+    const attendanceRecords = await prisma.attendanceRecord.findMany({
+      where: { userId: id },
+      include: {
+        course: { select: { code: true, name: true } },
+        faculty: { select: { rollNumber: true, name: true } },
+        timetable: { select: { periodNumber: true, startTime: true, endTime: true, roomNo: true } },
+      },
+      orderBy: [{ date: "desc" }, { periodNumber: "asc" }],
+    });
+
+    let presentCount = 0;
+    let absentCount = 0;
+    let lateCount = 0;
+    for (const r of attendanceRecords) {
+      const st = (r.status || "").toLowerCase();
+      if (st === "present") presentCount++;
+      else if (st === "absent") absentCount++;
+      else if (st === "late") lateCount++;
+    }
+    const totalSessions = attendanceRecords.length;
+    const attendancePercentage = totalSessions > 0
+      ? Math.round(((presentCount + lateCount) / totalSessions) * 100)
+      : 100;
+    const isShortage = totalSessions > 0 && attendancePercentage < 75;
+
+    // 2. Fetch cohort timetable from MasterTimetable
+    let timetableSlots: any[] = [];
+    if (student.department && student.semester && student.section) {
+      const matchingDepts = getMatchingDepartments(student.department);
+      const cleanSec = student.section.replace(/^Section\s+/i, "").trim().toUpperCase();
+
+      timetableSlots = await prisma.masterTimetable.findMany({
+        where: {
+          branch: { in: matchingDepts, mode: "insensitive" },
+          semester: student.semester,
+          section: { in: [cleanSec, `Section ${cleanSec}`] },
+        },
+        include: {
+          course: { select: { id: true, code: true, name: true, credits: true } },
+          faculty: { select: { id: true, rollNumber: true, name: true } },
+        },
+        orderBy: [
+          { day: "asc" },
+          { periodNumber: "asc" },
+        ],
+      });
+    }
+
+    return res.json({
+      student: {
+        id: student.id,
+        rollNumber: student.rollNumber,
+        name: student.name,
+        email: student.email,
+        role: student.role,
+        status: student.status,
+        department: student.department,
+        semester: student.semester,
+        section: student.section,
+        year: student.year,
+        studentType: student.studentType,
+        cgpa: student.cgpa,
+        creditsEarned: student.creditsEarned,
+        feeStatus: student.feeStatus,
+        avatarUrl: student.avatarUrl,
+        createdAt: student.createdAt,
+        updatedAt: student.updatedAt,
+        parent: student.parent,
+        attendanceSummary: {
+          totalSessions,
+          presentCount,
+          absentCount,
+          lateCount,
+          attendancePercentage,
+          isShortage,
+          eligibility: attendancePercentage >= 75 ? "Eligible" : "Attendance Shortage",
+          eligibilityThreshold: 75,
+        },
+        attendanceHistory: attendanceRecords.map((r) => ({
+          id: r.id,
+          date: r.date,
+          periodNumber: r.periodNumber,
+          status: r.status,
+          remarks: r.remarks,
+          course: r.course ? { code: r.course.code, name: r.course.name } : null,
+          faculty: r.faculty ? { rollNumber: r.faculty.rollNumber, name: r.faculty.name } : null,
+          roomNo: r.timetable?.roomNo || null,
+        })),
+        cohortTimetable: timetableSlots.map((t) => ({
+          id: t.id,
+          day: t.day,
+          periodNumber: t.periodNumber,
+          startTime: t.startTime,
+          endTime: t.endTime,
+          roomNo: t.roomNo,
+          isLab: t.isLab,
+          course: t.course ? { id: t.course.id, code: t.course.code, name: t.course.name, credits: t.course.credits } : null,
+          faculty: t.faculty ? { id: t.faculty.id, rollNumber: t.faculty.rollNumber, name: t.faculty.name } : null,
+        })),
+        courseRegistrations: student.courseRegistrations,
+        courseEnrollmentStatus: student.courseRegistrations.length > 0 ? "Configured" : "Not Available",
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to fetch student details." });
+  }
+});
+
+// POST /api/anits/super-admin/students: Register a New Student
+router.post("/super-admin/students", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const {
+    rollNumber,
+    name,
+    email,
+    department,
+    semester,
+    section,
+    year,
+    studentType,
+    cgpa,
+    creditsEarned,
+    feeStatus,
+    password,
+  } = req.body;
+
+  if (!rollNumber || !name || !email || !department) {
+    return res.status(400).json({ error: "Roll number, name, email, and department are required." });
+  }
+
+  const cleanRoll = rollNumber.trim().toUpperCase();
+  const cleanEmail = email.trim().toLowerCase();
+
+  try {
+    const existing = await prisma.student.findFirst({
+      where: {
+        OR: [
+          { rollNumber: { equals: cleanRoll, mode: "insensitive" } },
+          { email: { equals: cleanEmail, mode: "insensitive" } },
+        ],
+      },
+    });
+
+    if (existing) {
+      if (existing.rollNumber.toUpperCase() === cleanRoll) {
+        return res.status(400).json({ error: `Student with roll number '${cleanRoll}' already exists.` });
+      }
+      return res.status(400).json({ error: `Student with email '${cleanEmail}' already exists.` });
+    }
+
+    const hashedPassword = await bcrypt.hash(password || "password123", 10);
+    const parsedSem = semester ? parseInt(semester, 10) : 1;
+    const parsedYear = year ? parseInt(year, 10) : Math.ceil((parsedSem || 1) / 2);
+    const parsedCgpa = cgpa !== undefined && cgpa !== "" ? parseFloat(cgpa) : 8.0;
+    const parsedCredits = creditsEarned !== undefined && creditsEarned !== "" ? parseInt(creditsEarned, 10) : 0;
+
+    const newStudent = await prisma.student.create({
+      data: {
+        rollNumber: cleanRoll,
+        name: name.trim(),
+        email: cleanEmail,
+        password: hashedPassword,
+        department: department.trim(),
+        semester: parsedSem,
+        section: section ? section.trim().toUpperCase() : "A",
+        year: parsedYear,
+        studentType: studentType || "Day Scholar",
+        cgpa: parsedCgpa,
+        creditsEarned: parsedCredits,
+        feeStatus: feeStatus || "Paid",
+        status: "Active",
+        role: "student",
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "STUDENT_CREATED",
+        module: "Students",
+        targetEntity: "Student",
+        targetId: newStudent.id,
+        status: "Success",
+      },
+    });
+
+    return res.status(201).json({
+      message: "Student registered successfully.",
+      student: newStudent,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to register student." });
+  }
+});
+
+// PUT /api/anits/super-admin/students/:id: Update Student Record
+router.put("/super-admin/students/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const { id } = req.params;
+  const {
+    name,
+    email,
+    department,
+    semester,
+    section,
+    year,
+    studentType,
+    cgpa,
+    creditsEarned,
+    feeStatus,
+    status,
+  } = req.body;
+
+  try {
+    const student = await prisma.student.findUnique({ where: { id } });
+    if (!student) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    if (email && email.trim().toLowerCase() !== student.email.toLowerCase()) {
+      const cleanEmail = email.trim().toLowerCase();
+      const existingEmail = await prisma.student.findFirst({
+        where: {
+          email: { equals: cleanEmail, mode: "insensitive" },
+          id: { not: id },
+        },
+      });
+      if (existingEmail) {
+        return res.status(400).json({ error: `Email '${cleanEmail}' is already in use by another student.` });
+      }
+    }
+
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name.trim();
+    if (email !== undefined) updateData.email = email.trim().toLowerCase();
+    if (department !== undefined) updateData.department = department.trim();
+    if (semester !== undefined) updateData.semester = parseInt(semester, 10);
+    if (section !== undefined) updateData.section = section.trim().toUpperCase();
+    if (year !== undefined) updateData.year = parseInt(year, 10);
+    if (studentType !== undefined) updateData.studentType = studentType;
+    if (cgpa !== undefined && cgpa !== "") updateData.cgpa = parseFloat(cgpa);
+    if (creditsEarned !== undefined && creditsEarned !== "") updateData.creditsEarned = parseInt(creditsEarned, 10);
+    if (feeStatus !== undefined) updateData.feeStatus = feeStatus;
+    if (status !== undefined) updateData.status = status;
+
+    const updated = await prisma.student.update({
+      where: { id },
+      data: updateData,
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "STUDENT_UPDATED",
+        module: "Students",
+        targetEntity: "Student",
+        targetId: id,
+        status: "Success",
+      },
+    });
+
+    return res.json({
+      message: "Student record updated successfully.",
+      student: updated,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to update student record." });
+  }
+});
+
+// DELETE /api/anits/super-admin/students/:id: Safe Student Deactivation
+router.delete("/super-admin/students/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            attendanceRecords: true,
+            courseRegistrations: true,
+          },
+        },
+      },
+    });
+
+    if (!student) {
+      return res.status(404).json({ error: "Student not found." });
+    }
+
+    const deactivated = await prisma.student.update({
+      where: { id },
+      data: { status: "Inactive" },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "STUDENT_DEACTIVATED",
+        module: "Students",
+        targetEntity: "Student",
+        targetId: id,
+        status: "Success",
+      },
+    });
+
+    return res.json({
+      message: "Student record has been safely deactivated to 'Inactive'. Historical academic and attendance data preserved.",
+      status: deactivated.status,
+      preservedHistory: {
+        attendanceRecords: student._count.attendanceRecords,
+        courseRegistrations: student._count.courseRegistrations,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to deactivate student." });
+  }
+});
+
 export default router;
