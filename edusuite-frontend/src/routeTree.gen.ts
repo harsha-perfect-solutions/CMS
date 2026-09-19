@@ -133,6 +133,7 @@ import { Route as FacultyIndexRouteImport } from './routes/faculty.index'
 import { Route as FacultyAssessmentsRouteImport } from './routes/faculty.assessments'
 import { Route as FacultyAssignmentsRouteImport } from './routes/faculty.assignments'
 import { Route as FacultyAttendanceRouteImport } from './routes/faculty.attendance'
+import { Route as FacultyAttendanceHistoryRouteImport } from './routes/faculty.attendance-history'
 import { Route as FacultyDashboardRouteImport } from './routes/faculty.dashboard'
 import { Route as FacultyEvaluationAndMarksRouteImport } from './routes/faculty.evaluation-and-marks'
 import { Route as FacultyEvaluationsRouteImport } from './routes/faculty.evaluations'
@@ -1281,6 +1282,12 @@ const FacultyAttendanceRoute = FacultyAttendanceRouteImport.update({
   path: '/attendance',
   getParentRoute: () => FacultyRoute,
 } as any)
+const FacultyAttendanceHistoryRoute =
+  FacultyAttendanceHistoryRouteImport.update({
+    id: '/attendance-history',
+    path: '/attendance-history',
+    getParentRoute: () => FacultyRoute,
+  } as any)
 const FacultyDashboardRoute = FacultyDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -4314,6 +4321,7 @@ export interface FileRoutesByFullPath {
   '/faculty/assessments': typeof FacultyAssessmentsRoute
   '/faculty/assignments': typeof FacultyAssignmentsRoute
   '/faculty/attendance': typeof FacultyAttendanceRoute
+  '/faculty/attendance-history': typeof FacultyAttendanceHistoryRoute
   '/faculty/dashboard': typeof FacultyDashboardRoute
   '/faculty/evaluation-and-marks': typeof FacultyEvaluationAndMarksRoute
   '/faculty/evaluations': typeof FacultyEvaluationsRoute
@@ -4940,6 +4948,7 @@ export interface FileRoutesByTo {
   '/faculty/assessments': typeof FacultyAssessmentsRoute
   '/faculty/assignments': typeof FacultyAssignmentsRoute
   '/faculty/attendance': typeof FacultyAttendanceRoute
+  '/faculty/attendance-history': typeof FacultyAttendanceHistoryRoute
   '/faculty/dashboard': typeof FacultyDashboardRoute
   '/faculty/evaluation-and-marks': typeof FacultyEvaluationAndMarksRoute
   '/faculty/evaluations': typeof FacultyEvaluationsRoute
@@ -5579,6 +5588,7 @@ export interface FileRoutesById {
   '/faculty/assessments': typeof FacultyAssessmentsRoute
   '/faculty/assignments': typeof FacultyAssignmentsRoute
   '/faculty/attendance': typeof FacultyAttendanceRoute
+  '/faculty/attendance-history': typeof FacultyAttendanceHistoryRoute
   '/faculty/dashboard': typeof FacultyDashboardRoute
   '/faculty/evaluation-and-marks': typeof FacultyEvaluationAndMarksRoute
   '/faculty/evaluations': typeof FacultyEvaluationsRoute
@@ -6227,6 +6237,7 @@ export interface FileRouteTypes {
     | '/faculty/assessments'
     | '/faculty/assignments'
     | '/faculty/attendance'
+    | '/faculty/attendance-history'
     | '/faculty/dashboard'
     | '/faculty/evaluation-and-marks'
     | '/faculty/evaluations'
@@ -6853,6 +6864,7 @@ export interface FileRouteTypes {
     | '/faculty/assessments'
     | '/faculty/assignments'
     | '/faculty/attendance'
+    | '/faculty/attendance-history'
     | '/faculty/dashboard'
     | '/faculty/evaluation-and-marks'
     | '/faculty/evaluations'
@@ -7491,6 +7503,7 @@ export interface FileRouteTypes {
     | '/faculty/assessments'
     | '/faculty/assignments'
     | '/faculty/attendance'
+    | '/faculty/attendance-history'
     | '/faculty/dashboard'
     | '/faculty/evaluation-and-marks'
     | '/faculty/evaluations'
@@ -8956,6 +8969,13 @@ declare module '@tanstack/react-router' {
       path: '/attendance'
       fullPath: '/faculty/attendance'
       preLoaderRoute: typeof FacultyAttendanceRouteImport
+      parentRoute: typeof FacultyRoute
+    }
+    '/faculty/attendance-history': {
+      id: '/faculty/attendance-history'
+      path: '/attendance-history'
+      fullPath: '/faculty/attendance-history'
+      preLoaderRoute: typeof FacultyAttendanceHistoryRouteImport
       parentRoute: typeof FacultyRoute
     }
     '/faculty/dashboard': {
@@ -12831,6 +12851,7 @@ interface FacultyRouteChildren {
   FacultyAssessmentsRoute: typeof FacultyAssessmentsRoute
   FacultyAssignmentsRoute: typeof FacultyAssignmentsRoute
   FacultyAttendanceRoute: typeof FacultyAttendanceRoute
+  FacultyAttendanceHistoryRoute: typeof FacultyAttendanceHistoryRoute
   FacultyDashboardRoute: typeof FacultyDashboardRoute
   FacultyEvaluationAndMarksRoute: typeof FacultyEvaluationAndMarksRoute
   FacultyEvaluationsRoute: typeof FacultyEvaluationsRoute
@@ -12857,6 +12878,7 @@ const FacultyRouteChildren: FacultyRouteChildren = {
   FacultyAssessmentsRoute: FacultyAssessmentsRoute,
   FacultyAssignmentsRoute: FacultyAssignmentsRoute,
   FacultyAttendanceRoute: FacultyAttendanceRoute,
+  FacultyAttendanceHistoryRoute: FacultyAttendanceHistoryRoute,
   FacultyDashboardRoute: FacultyDashboardRoute,
   FacultyEvaluationAndMarksRoute: FacultyEvaluationAndMarksRoute,
   FacultyEvaluationsRoute: FacultyEvaluationsRoute,

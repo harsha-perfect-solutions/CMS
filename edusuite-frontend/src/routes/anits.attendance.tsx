@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRole } from "@/context/role-context";
 import api from "@/lib/api";
@@ -75,6 +75,7 @@ export const Route = createFileRoute("/anits/attendance")({
 });
 
 function AnitsAttendancePage() {
+  const navigate = useNavigate();
   const searchParams = Route.useSearch();
   const { role, department } = useRole();
 
@@ -106,6 +107,25 @@ function AnitsAttendancePage() {
   const [facultyError, setFacultyError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState(searchParams.tab || (searchParams.timetableId ? "mark" : "today"));
+
+  const handleTabChange = (val: string) => {
+    setActiveTab(val);
+    navigate({
+      to: "/anits/attendance",
+      search: (prev: any) => ({
+        ...prev,
+        tab: val === "today" ? undefined : val,
+      }),
+      replace: true,
+    });
+  };
+
+  useEffect(() => {
+    if (searchParams.tab && ["today", "history", "analytics", "mark"].includes(searchParams.tab)) {
+      setActiveTab(searchParams.tab);
+    }
+  }, [searchParams.tab]);
+
   const [activeFormSlot, setActiveFormSlot] = useState<TodayClassItem | null>(null);
   const [rosterStudents, setRosterStudents] = useState<AttendanceStudentItem[]>([]);
   const [loadingFaculty, setLoadingFaculty] = useState(isFaculty || isHod);
@@ -716,6 +736,25 @@ function AnitsAttendancePage() {
     }
   };
 
+  const handleEditHistorySession = (item: any) => {
+    const slotObj: TodayClassItem = {
+      id: item.timetableId || item.id,
+      timetableId: item.timetableId || item.id,
+      periodNumber: item.periodNumber || item.period || 1,
+      time: item.date,
+      roomNo: item.room || "Classroom",
+      branch: "CSE",
+      semester: 5,
+      section: item.section || "A",
+      subjectCode: item.subjectCode || (item.subject?.includes(" - ") ? item.subject.split(" - ")[0] : "COURSE"),
+      subjectName: item.subjectName || (item.subject?.includes(" - ") ? item.subject.split(" - ")[1] : item.subject || "Course"),
+      attendanceStatus: "Attendance Submitted",
+      attendanceSubmitted: true,
+      status: "ATTENDANCE SUBMITTED",
+    };
+    loadRosterForSlot(slotObj);
+  };
+
   const handleSubmitAttendance = async (data: {
     students: { studentId: string; status: "Present" | "Absent" | "Late"; remarks?: string }[];
     summary: { total: number; present: number; absent: number; late: number; percentage: number };
@@ -748,7 +787,7 @@ function AnitsAttendancePage() {
             : "Attendance successfully committed to PostgreSQL database."
         );
         setActiveFormSlot(null);
-        setActiveTab("today");
+        handleTabChange("today");
         fetchFacultyAttendance();
         fetchFacultyHistory(1);
         fetchFacultyAnalytics();
@@ -910,7 +949,7 @@ function AnitsAttendancePage() {
 
         <StatisticsCards attendanceData={{ stats: facultyStats } as any} />
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
           <TabsList className="bg-card border border-border/60 p-1 rounded-xl">
             <TabsTrigger value="today" className="rounded-lg text-xs font-semibold">
               Today's Sessions
@@ -1023,7 +1062,12 @@ function AnitsAttendancePage() {
               </div>
             </div>
 
-            <AttendanceHistory history={facultyHistory} isLoading={loadingHistory} />
+            <AttendanceHistory
+              history={facultyHistory}
+              isLoading={loadingHistory}
+              totalCount={historyPagination.total}
+              onEditSession={handleEditHistorySession}
+            />
 
             {/* Pagination Controls */}
             {historyPagination.totalPages > 1 && (

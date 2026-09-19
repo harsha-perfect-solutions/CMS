@@ -1,7 +1,8 @@
-import { History, Calendar, Clock, Users, BookOpen } from "lucide-react";
+import { History, Calendar, Clock, Users, BookOpen, Edit3 } from "lucide-react";
 import { Panel } from "@/components/dashboard/panel";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 export interface AttendanceHistorySessionItem {
   id: string;
@@ -25,9 +26,11 @@ export interface AttendanceHistorySessionItem {
 interface AttendanceHistoryProps {
   history: AttendanceHistorySessionItem[];
   isLoading?: boolean;
+  totalCount?: number;
+  onEditSession?: (session: AttendanceHistorySessionItem) => void;
 }
 
-export function AttendanceHistory({ history = [], isLoading = false }: AttendanceHistoryProps) {
+export function AttendanceHistory({ history = [], isLoading = false, totalCount, onEditSession }: AttendanceHistoryProps) {
   if (isLoading) {
     return (
       <Panel
@@ -59,10 +62,15 @@ export function AttendanceHistory({ history = [], isLoading = false }: Attendanc
     );
   }
 
+  const count = totalCount !== undefined ? totalCount : history.length;
+  const countLabel = totalCount !== undefined && totalCount > history.length
+    ? `${count} sessions · Showing ${history.length}`
+    : `${count} session${count !== 1 ? "s" : ""}`;
+
   return (
     <Panel
       title="Attendance Submission History Log"
-      description={`Chronological log of verified class sessions submitted by you (${history.length} session${history.length > 1 ? "s" : ""})`}
+      description={`Chronological log of verified class sessions submitted by you (${countLabel})`}
       className="border border-border bg-card rounded-2xl p-6 shadow-card text-xs"
     >
       <div className="overflow-x-auto max-w-full rounded-2xl border">
@@ -78,6 +86,7 @@ export function AttendanceHistory({ history = [], isLoading = false }: Attendanc
               <TableHead className="font-bold text-center text-amber-600">Late</TableHead>
               <TableHead className="font-bold text-center">Total</TableHead>
               <TableHead className="font-bold text-right">Attendance Rate</TableHead>
+              <TableHead className="font-bold text-center">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -126,6 +135,20 @@ export function AttendanceHistory({ history = [], isLoading = false }: Attendanc
                     >
                       {rate}%
                     </Badge>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {onEditSession ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onEditSession(item)}
+                        className="h-6 px-2 text-[11px] font-semibold text-primary hover:bg-primary/10 rounded-md gap-1 cursor-pointer"
+                      >
+                        <Edit3 className="size-3" /> Edit
+                      </Button>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground font-mono">Verified</span>
+                    )}
                   </TableCell>
                 </TableRow>
               );

@@ -5,14 +5,15 @@ interface AttendanceHeaderProps {
   semester: string;
   currentDate: string;
 }
-
 export function AttendanceHeader({ academicYear, semester, currentDate }: AttendanceHeaderProps) {
+  const cleanSemester = semester ? semester.replace(/^Semester\s*/i, "") : "5";
+
   return (
     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-4 text-xs">
       <div>
         <h1 className="font-display text-2xl font-extrabold tracking-tight">Attendance Management</h1>
         <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-1 font-medium">
-          <CalendarRange className="size-3.5" /> Academic Year {academicYear} &middot; Semester {semester}
+          <CalendarRange className="size-3.5" /> Academic Year {academicYear} &middot; Semester {cleanSemester}
         </p>
       </div>
 

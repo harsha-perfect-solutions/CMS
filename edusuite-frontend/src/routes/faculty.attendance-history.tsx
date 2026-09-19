@@ -1,10 +1,10 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/faculty/attendance")({
-  beforeLoad: ({ search }) => {
+export const Route = createFileRoute("/faculty/attendance-history")({
+  beforeLoad: () => {
     throw redirect({
       to: "/anits/attendance",
-      search: search as any,
+      search: { tab: "history" } as any,
     });
   },
   component: () => null,

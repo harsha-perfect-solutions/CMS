@@ -74,9 +74,8 @@ export function AnitsSidebar({
         return [
           { label: "Dashboard", href: "/anits/dashboard", icon: LayoutDashboard },
           { label: "My Timetable", href: "/anits/timetable", icon: Calendar },
-          { label: "Take Attendance", href: "/anits/attendance", icon: ClipboardCheck },
+          { label: "Attendance", href: "/anits/attendance", icon: ClipboardCheck },
           { label: "My Classes", href: "/anits/my-classes", icon: BookOpen },
-          { label: "Attendance History", href: "/anits/attendance?tab=history", icon: Clock },
           { label: "Reports", href: "/anits/reports", icon: FileBarChart },
           { label: "Profile", href: "/anits/profile", icon: User },
         ];
@@ -150,12 +149,9 @@ export function AnitsSidebar({
         <nav className="space-y-1">
           {navItems.map((item) => {
             const isActive =
-              item.href.includes("?")
-                ? fullPath === item.href
-                : pathname === item.href ||
-                  (item.href !== "/anits/dashboard" &&
-                    pathname.startsWith(item.href) &&
-                    !fullPath.includes("?"));
+              item.href === "/anits/dashboard"
+                ? pathname === "/anits/dashboard"
+                : pathname === item.href || (item.href !== "/anits/dashboard" && pathname.startsWith(item.href));
 
             const Icon = item.icon;
 
