@@ -181,11 +181,12 @@ function AnitsReportsPage() {
   const loadOverview = useCallback(async () => {
     setOverviewLoading(true);
     try {
-      const res = await api.get("api/anits/super-admin/reports/overview");
+      const res = await api.get("api/anits/reports/overview");
       if (res.data) {
         setOverview(res.data);
-        if (res.data.academicYear && !academicYear) {
-          setAcademicYear(res.data.academicYear);
+        const activeYear = res.data.activeAcademicYear || res.data.academicYear;
+        if (activeYear && !academicYear) {
+          setAcademicYear(activeYear);
         }
       }
     } catch (err: any) {
@@ -214,15 +215,20 @@ function AnitsReportsPage() {
       if (dateFrom) params.append("dateFrom", dateFrom);
       if (dateTo) params.append("dateTo", dateTo);
 
-      const res = await api.get(`api/anits/super-admin/reports/data?${params.toString()}`);
+      const res = await api.get(`api/anits/reports/data?${params.toString()}`);
       if (res.data && res.data.columns) {
-        setReportData(res.data);
+        setReportData({
+          ...res.data,
+          total: res.data.total ?? res.data.pagination?.totalRows ?? res.data.rows?.length ?? 0,
+          totalPages: res.data.totalPages ?? res.data.pagination?.totalPages ?? 1,
+        });
       } else {
-        throw new Error(res.data?.error || "Invalid report response structure");
+        throw new Error(res.data?.error?.message || res.data?.error || "Invalid report response structure");
       }
     } catch (err: any) {
       console.error("Failed to generate report:", err);
-      setErrorMsg("Unable to generate report from PostgreSQL database.");
+      const serverMsg = err.response?.data?.error?.message || err.response?.data?.error || err.message;
+      setErrorMsg(serverMsg || "Unable to generate report from PostgreSQL database.");
       setReportData(null);
     } finally {
       setDataLoading(false);
@@ -279,7 +285,8 @@ function AnitsReportsPage() {
       if (dateTo) params.append("dateTo", dateTo);
 
       const token = localStorage.getItem("token") || localStorage.getItem("cms_token");
-      const res = await fetch(`http://localhost:5000/api/anits/super-admin/reports/export?${params.toString()}`, {
+      const baseURL = (api.getBaseURL() || "http://localhost:5000/").replace(/\/$/, "");
+      const res = await fetch(`${baseURL}/api/anits/reports/export?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -306,13 +313,14 @@ function AnitsReportsPage() {
     }
   };
 
-  // One-click Department Summary Export (Requirement 49)
+  // One-click Department Summary Export
   const handleExportDeptSummary = async () => {
     setExporting("dept_summary");
     const toastId = toast.loading("Exporting complete Department Summary from PostgreSQL...");
     try {
       const token = localStorage.getItem("token") || localStorage.getItem("cms_token");
-      const res = await fetch("http://localhost:5000/api/anits/super-admin/reports/department-summary/export", {
+      const baseURL = (api.getBaseURL() || "http://localhost:5000/").replace(/\/$/, "");
+      const res = await fetch(`${baseURL}/api/anits/reports/department-summary/export`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -330,10 +338,10 @@ function AnitsReportsPage() {
       window.URL.revokeObjectURL(url);
 
       toast.dismiss(toastId);
-      toast.success("Department Summary CSV successfully exported.");
+      toast.success("ANITS Department Summary successfully downloaded.");
     } catch (err: any) {
       toast.dismiss(toastId);
-      toast.error(err.message || "Failed to export Department Summary.");
+      toast.error(err.message || "Failed to export department summary.");
     } finally {
       setExporting(null);
     }
@@ -580,7 +588,7 @@ function AnitsReportsPage() {
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Attendance Records</p>
               <p className="text-2xl font-black text-foreground tracking-tight">
-                {overviewLoading ? "..." : overview?.totalAttendanceRecords?.toLocaleString() ?? "—"}
+                {overviewLoading ? "..." : overview?.totalAttendanceRecords?.toLocaleString() ?? "0"}
               </p>
               <p className="text-[11px] text-muted-foreground">Logged session marks in ledger</p>
             </div>
@@ -596,7 +604,7 @@ function AnitsReportsPage() {
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Scheduled Sessions</p>
               <p className="text-2xl font-black text-foreground tracking-tight">
-                {overviewLoading ? "..." : overview?.totalScheduledSessions?.toLocaleString() ?? "—"}
+                {overviewLoading ? "..." : (overview?.totalScheduledSessions ?? (overview as any)?.scheduledSessions)?.toLocaleString() ?? "0"}
               </p>
               <p className="text-[11px] text-muted-foreground">Master Timetable slots</p>
             </div>
@@ -612,7 +620,7 @@ function AnitsReportsPage() {
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Students</p>
               <p className="text-2xl font-black text-foreground tracking-tight">
-                {overviewLoading ? "..." : overview?.totalStudents?.toLocaleString() ?? "—"}
+                {overviewLoading ? "..." : overview?.totalStudents?.toLocaleString() ?? "0"}
               </p>
               <p className="text-[11px] text-muted-foreground">Enrolled cohort headcount</p>
             </div>
@@ -628,7 +636,7 @@ function AnitsReportsPage() {
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Faculty</p>
               <p className="text-2xl font-black text-foreground tracking-tight">
-                {overviewLoading ? "..." : overview?.totalFaculty?.toLocaleString() ?? "—"}
+                {overviewLoading ? "..." : overview?.totalFaculty?.toLocaleString() ?? "0"}
               </p>
               <p className="text-[11px] text-muted-foreground">Teaching &amp; academic staff</p>
             </div>
@@ -883,7 +891,13 @@ function AnitsReportsPage() {
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="text-[11px] font-semibold bg-muted/30">
-              {reportData?.total ? `${reportData.total.toLocaleString()} Total Records` : "0 Records"}
+              {dataLoading
+                ? "Generating..."
+                : errorMsg
+                ? "Error"
+                : reportData?.total !== undefined
+                ? `${reportData.total.toLocaleString()} Total Records`
+                : "—"}
             </Badge>
           </div>
         </div>
@@ -920,21 +934,22 @@ function AnitsReportsPage() {
         {dataLoading ? (
           <div className="py-20 flex flex-col items-center justify-center gap-3 text-center">
             <RefreshCw className="size-6 text-blue-600 animate-spin" />
-            <p className="text-xs font-semibold text-foreground">Generating report from PostgreSQL...</p>
+            <p className="text-xs font-semibold text-foreground">Generating report...</p>
             <p className="text-[11px] text-muted-foreground">Aggregating database relations and applying filter constraints</p>
           </div>
         ) : errorMsg ? (
           <div className="py-16 flex flex-col items-center justify-center gap-3 text-center">
             <AlertTriangle className="size-7 text-rose-600" />
-            <p className="text-xs font-bold text-foreground">{errorMsg}</p>
-            <Button size="sm" variant="outline" onClick={loadReportData} className="text-xs gap-1.5 mt-1">
+            <p className="text-sm font-bold text-foreground">Unable to generate report.</p>
+            <p className="text-xs text-rose-600 dark:text-rose-400 max-w-md">{errorMsg}</p>
+            <Button size="sm" variant="outline" onClick={loadReportData} className="text-xs gap-1.5 mt-2">
               <RefreshCw className="size-3" /> Retry Generation
             </Button>
           </div>
         ) : !reportData?.rows || reportData.rows.length === 0 ? (
           <div className="py-16 flex flex-col items-center justify-center gap-2 text-center">
             <Database className="size-7 text-muted-foreground/40" />
-            <p className="text-xs font-semibold text-foreground">No data available for the selected filters.</p>
+            <p className="text-xs font-semibold text-foreground">No records found for the selected filters.</p>
             <p className="text-[11px] text-muted-foreground max-w-sm">
               Try adjusting your Department, Semester, Section, or Date Range filter parameters to view records.
             </p>

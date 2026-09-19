@@ -3154,129 +3154,7 @@ router.delete("/super-admin/students/:id", authenticateToken, async (req: Authen
 });
 
 // =========================================================================
-// SECTION 6: ANITS SUPER ADMIN REPORTS & ANALYTICS CENTER
-// =========================================================================
-
-// GET /api/anits/super-admin/reports/overview: Live Dashboard Overview KPIs
-router.get("/super-admin/reports/overview", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const anitsRole = resolveAnitsRole(req.userRole || "");
-    if (anitsRole !== "ANITS_ADMIN") {
-      return res.status(403).json({ error: "Access denied. ANITS Super Admin authorization required." });
-    }
-
-    const overview = await AnitsReportsService.getOverview();
-    return res.json(overview);
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message || "Failed to load reports overview." });
-  }
-});
-
-// GET /api/anits/super-admin/reports/data: Live Dynamic Report Data with Server-Side Aggregation
-router.get("/super-admin/reports/data", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const anitsRole = resolveAnitsRole(req.userRole || "");
-    if (anitsRole !== "ANITS_ADMIN") {
-      return res.status(403).json({ error: "Access denied. ANITS Super Admin authorization required." });
-    }
-
-    const category = String(req.query.category || "attendance");
-    const reportType = String(req.query.reportType || "summary");
-    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
-    const limit = Math.max(1, parseInt(String(req.query.limit || "25"), 10));
-
-    const filters = {
-      department: req.query.department ? String(req.query.department).trim() : undefined,
-      semester: req.query.semester ? String(req.query.semester).trim() : undefined,
-      section: req.query.section ? String(req.query.section).trim() : undefined,
-      academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
-      dateFrom: req.query.dateFrom ? String(req.query.dateFrom).trim() : undefined,
-      dateTo: req.query.dateTo ? String(req.query.dateTo).trim() : undefined,
-      studentId: req.query.studentId ? String(req.query.studentId).trim() : undefined,
-      courseCode: req.query.courseCode ? String(req.query.courseCode).trim() : undefined,
-    };
-
-    const result = await AnitsReportsService.getReportData(category, reportType, filters, page, limit);
-    return res.json(result);
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message || "Failed to generate report." });
-  }
-});
-
-// GET /api/anits/super-admin/reports/export: Live Filter-Aware CSV Stream
-router.get("/super-admin/reports/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const anitsRole = resolveAnitsRole(req.userRole || "");
-    if (anitsRole !== "ANITS_ADMIN") {
-      return res.status(403).json({ error: "Access denied. ANITS Super Admin authorization required." });
-    }
-
-    const category = String(req.query.category || "attendance");
-    const reportType = String(req.query.reportType || "summary");
-
-    const filters = {
-      department: req.query.department ? String(req.query.department).trim() : undefined,
-      semester: req.query.semester ? String(req.query.semester).trim() : undefined,
-      section: req.query.section ? String(req.query.section).trim() : undefined,
-      academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
-      dateFrom: req.query.dateFrom ? String(req.query.dateFrom).trim() : undefined,
-      dateTo: req.query.dateTo ? String(req.query.dateTo).trim() : undefined,
-    };
-
-    const { filename, csvContent } = await AnitsReportsService.generateCSV(category, reportType, filters);
-
-    await prisma.auditLog.create({
-      data: {
-        actorId: req.userId,
-        actorName: req.userEmail || "Super Admin",
-        actorRole: "super_admin",
-        action: "REPORT_EXPORTED",
-        module: "Reports",
-        targetEntity: `${category}:${reportType}`,
-        status: "Success",
-      },
-    });
-
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    return res.status(200).send(csvContent);
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message || "Failed to export report CSV." });
-  }
-});
-
-// GET /api/anits/super-admin/reports/department-summary/export: Dedicated One-Click Export
-router.get("/super-admin/reports/department-summary/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const anitsRole = resolveAnitsRole(req.userRole || "");
-    if (anitsRole !== "ANITS_ADMIN") {
-      return res.status(403).json({ error: "Access denied. ANITS Super Admin authorization required." });
-    }
-
-    const { filename, csvContent } = await AnitsReportsService.generateCSV("departments", "summary", {});
-
-    await prisma.auditLog.create({
-      data: {
-        actorId: req.userId,
-        actorName: req.userEmail || "Super Admin",
-        actorRole: "super_admin",
-        action: "REPORT_EXPORTED",
-        module: "Reports",
-        targetEntity: "departments:summary",
-        status: "Success",
-      },
-    });
-
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    return res.status(200).send(csvContent);
-  } catch (error: any) {
-    return res.status(500).json({ error: error.message || "Failed to export department summary CSV." });
-  }
-});
-
-// =========================================================================
-// HOD PORTAL DEDICATED DEPARTMENT-SCOPED ENDPOINTS
+// SECTION 6: ANITS REPORTS & ANALYTICS CENTER (HOD & SUPER ADMIN)
 // =========================================================================
 
 async function isHodOrAdmin(req: AuthenticatedRequest): Promise<boolean> {
@@ -3291,6 +3169,284 @@ async function isHodOrAdmin(req: AuthenticatedRequest): Promise<boolean> {
   }
   return false;
 }
+
+// GET /api/anits/reports/overview & /api/anits/super-admin/reports/overview
+router.get(["/reports/overview", "/super-admin/reports/overview"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({
+        success: false,
+        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+      });
+    }
+
+    const anitsRole = resolveAnitsRole(req.userRole || "");
+    const isSuperAdmin = anitsRole === "ANITS_ADMIN";
+
+    let deptScope: string | undefined = undefined;
+    if (isSuperAdmin) {
+      deptScope = req.query.department ? String(req.query.department).trim() : undefined;
+    } else {
+      const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+      const ctx = await AnitsHodService.resolveHodContext(
+        req.userId!,
+        req.userRole!,
+        req.userDepartment,
+        requestedDept
+      );
+      deptScope = ctx.deptCode;
+    }
+
+    const overview = await AnitsReportsService.getOverview(deptScope);
+    return res.json(overview);
+  } catch (error: any) {
+    console.error("GET reports/overview error:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      error: { code: error.statusCode === 403 ? "FORBIDDEN" : "REPORTS_ERROR", message: error.message || "Failed to load reports overview." },
+    });
+  }
+});
+
+// GET /api/anits/reports/data & /api/anits/super-admin/reports/data
+router.get(["/reports/data", "/super-admin/reports/data"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({
+        success: false,
+        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+      });
+    }
+
+    const anitsRole = resolveAnitsRole(req.userRole || "");
+    const isSuperAdmin = anitsRole === "ANITS_ADMIN";
+
+    let deptScope: string | undefined = undefined;
+    if (isSuperAdmin) {
+      deptScope = req.query.department ? String(req.query.department).trim() : undefined;
+    } else {
+      const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+      const ctx = await AnitsHodService.resolveHodContext(
+        req.userId!,
+        req.userRole!,
+        req.userDepartment,
+        requestedDept
+      );
+      // HOD scope is strictly enforced to their authenticated department
+      deptScope = ctx.deptCode;
+    }
+
+    const category = String(req.query.category || "attendance");
+    const reportType = String(req.query.reportType || "summary");
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+    const limit = Math.max(1, parseInt(String(req.query.limit || "25"), 10));
+
+    const filters = {
+      department: deptScope,
+      semester: req.query.semester ? String(req.query.semester).trim() : undefined,
+      section: req.query.section ? String(req.query.section).trim() : undefined,
+      academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
+      dateFrom: req.query.dateFrom ? String(req.query.dateFrom).trim() : undefined,
+      dateTo: req.query.dateTo ? String(req.query.dateTo).trim() : undefined,
+      studentId: req.query.studentId ? String(req.query.studentId).trim() : undefined,
+      courseCode: req.query.courseCode ? String(req.query.courseCode).trim() : undefined,
+      search: req.query.search ? String(req.query.search).trim() : undefined,
+      status: req.query.status ? String(req.query.status).trim() : undefined,
+    };
+
+    const result = await AnitsReportsService.getReportData(category, reportType, filters, page, limit);
+    return res.json(result);
+  } catch (error: any) {
+    console.error("GET reports/data error:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      error: { code: error.statusCode === 403 ? "FORBIDDEN" : "REPORT_GENERATION_FAILED", message: error.message || "Failed to generate report." },
+    });
+  }
+});
+
+// Category Shorthand Endpoints
+const shorthandCategories = ["attendance", "timetable", "students", "faculty", "classes"];
+for (const cat of shorthandCategories) {
+  router.get([`/reports/${cat}`, `/super-admin/reports/${cat}`], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    req.query.category = cat;
+    try {
+      if (!(await isHodOrAdmin(req))) {
+        return res.status(403).json({
+          success: false,
+          error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+        });
+      }
+
+      const anitsRole = resolveAnitsRole(req.userRole || "");
+      const isSuperAdmin = anitsRole === "ANITS_ADMIN";
+
+      let deptScope: string | undefined = undefined;
+      if (isSuperAdmin) {
+        deptScope = req.query.department ? String(req.query.department).trim() : undefined;
+      } else {
+        const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+        const ctx = await AnitsHodService.resolveHodContext(
+          req.userId!,
+          req.userRole!,
+          req.userDepartment,
+          requestedDept
+        );
+        deptScope = ctx.deptCode;
+      }
+
+      const reportType = String(req.query.reportType || (cat === "timetable" ? "master" : cat === "students" ? "roster" : cat === "faculty" ? "directory" : "summary"));
+      const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+      const limit = Math.max(1, parseInt(String(req.query.limit || "25"), 10));
+
+      const filters = {
+        department: deptScope,
+        semester: req.query.semester ? String(req.query.semester).trim() : undefined,
+        section: req.query.section ? String(req.query.section).trim() : undefined,
+        academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
+        dateFrom: req.query.dateFrom ? String(req.query.dateFrom).trim() : undefined,
+        dateTo: req.query.dateTo ? String(req.query.dateTo).trim() : undefined,
+        search: req.query.search ? String(req.query.search).trim() : undefined,
+        status: req.query.status ? String(req.query.status).trim() : undefined,
+      };
+
+      const result = await AnitsReportsService.getReportData(cat, reportType, filters, page, limit);
+      return res.json(result);
+    } catch (error: any) {
+      console.error(`GET reports/${cat} error:`, error);
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        error: { code: error.statusCode === 403 ? "FORBIDDEN" : "REPORT_GENERATION_FAILED", message: error.message || `Failed to generate ${cat} report.` },
+      });
+    }
+  });
+}
+
+// GET /api/anits/reports/export & /api/anits/super-admin/reports/export: Filter-Aware CSV Stream
+router.get(["/reports/export", "/super-admin/reports/export"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({
+        success: false,
+        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+      });
+    }
+
+    const anitsRole = resolveAnitsRole(req.userRole || "");
+    const isSuperAdmin = anitsRole === "ANITS_ADMIN";
+
+    let deptScope: string | undefined = undefined;
+    if (isSuperAdmin) {
+      deptScope = req.query.department ? String(req.query.department).trim() : undefined;
+    } else {
+      const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+      const ctx = await AnitsHodService.resolveHodContext(
+        req.userId!,
+        req.userRole!,
+        req.userDepartment,
+        requestedDept
+      );
+      deptScope = ctx.deptCode;
+    }
+
+    const category = String(req.query.category || "attendance");
+    const reportType = String(req.query.reportType || "summary");
+
+    const filters = {
+      department: deptScope,
+      semester: req.query.semester ? String(req.query.semester).trim() : undefined,
+      section: req.query.section ? String(req.query.section).trim() : undefined,
+      academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
+      dateFrom: req.query.dateFrom ? String(req.query.dateFrom).trim() : undefined,
+      dateTo: req.query.dateTo ? String(req.query.dateTo).trim() : undefined,
+      search: req.query.search ? String(req.query.search).trim() : undefined,
+      status: req.query.status ? String(req.query.status).trim() : undefined,
+    };
+
+    const { filename, csvContent } = await AnitsReportsService.generateCSV(category, reportType, filters);
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || (isSuperAdmin ? "Super Admin" : "Department HOD"),
+        actorRole: req.userRole || (isSuperAdmin ? "super_admin" : "hod"),
+        action: "REPORT_EXPORTED",
+        module: "Reports",
+        targetEntity: `${category}:${reportType}${deptScope ? `:${deptScope}` : ""}`,
+        status: "Success",
+      },
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(csvContent);
+  } catch (error: any) {
+    console.error("GET reports/export error:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      error: { code: error.statusCode === 403 ? "FORBIDDEN" : "EXPORT_FAILED", message: error.message || "Failed to export report CSV." },
+    });
+  }
+});
+
+// GET /api/anits/reports/department-summary/export: Dedicated One-Click Export
+router.get(["/reports/department-summary/export", "/super-admin/reports/department-summary/export"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({
+        success: false,
+        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+      });
+    }
+
+    const anitsRole = resolveAnitsRole(req.userRole || "");
+    const isSuperAdmin = anitsRole === "ANITS_ADMIN";
+
+    let deptScope: string | undefined = undefined;
+    if (isSuperAdmin) {
+      deptScope = req.query.department ? String(req.query.department).trim() : undefined;
+    } else {
+      const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+      const ctx = await AnitsHodService.resolveHodContext(
+        req.userId!,
+        req.userRole!,
+        req.userDepartment,
+        requestedDept
+      );
+      deptScope = ctx.deptCode;
+    }
+
+    const { filename, csvContent } = await AnitsReportsService.generateCSV("departments", "summary", {
+      department: deptScope,
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || (isSuperAdmin ? "Super Admin" : "Department HOD"),
+        actorRole: req.userRole || (isSuperAdmin ? "super_admin" : "hod"),
+        action: "REPORT_EXPORTED",
+        module: "Reports",
+        targetEntity: `departments:summary${deptScope ? `:${deptScope}` : ""}`,
+        status: "Success",
+      },
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(csvContent);
+  } catch (error: any) {
+    console.error("GET reports/department-summary/export error:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      error: { code: error.statusCode === 403 ? "FORBIDDEN" : "EXPORT_FAILED", message: error.message || "Failed to export department summary CSV." },
+    });
+  }
+});
+
+// =========================================================================
+// HOD PORTAL DEDICATED DEPARTMENT-SCOPED ENDPOINTS
+// =========================================================================
 
 // GET /api/anits/hod/dashboard: Dynamic department dashboard
 router.get("/hod/dashboard", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {

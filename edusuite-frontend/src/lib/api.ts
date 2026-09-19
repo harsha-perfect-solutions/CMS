@@ -16,6 +16,10 @@ class ApiClient {
         : "/";
   }
 
+  public getBaseURL(): string {
+    return this.baseURL;
+  }
+
   private async request<T = any>(
     endpoint: string,
     options: RequestInit = {},
