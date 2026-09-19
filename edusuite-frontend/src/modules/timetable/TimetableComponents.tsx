@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useRole } from "@/context/role-context";
 import {
   CalendarRange,
@@ -98,6 +98,10 @@ export function TimetableModuleView({
   const [viewMode, setViewMode] = useState<"grid" | "faculty" | "room">(initialTab);
   const [selectedFacultyFilter, setSelectedFacultyFilter] = useState("");
 
+  const [gridData, setGridData] = useState<TimetableGrid | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+
   const departmentFacultyList = useMemo(() => {
     if (!gridData?.schedule || gridData.schedule.length === 0) return [];
     const set = new Set<string>();
@@ -122,10 +126,6 @@ export function TimetableModuleView({
       setViewMode(initialTab);
     }
   }, [initialTab]);
-
-  const [gridData, setGridData] = useState<TimetableGrid | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
 
   // Room Allocation Database State
   const [roomAllocations, setRoomAllocations] = useState<RoomAllocationItem[]>([]);
