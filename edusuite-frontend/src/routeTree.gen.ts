@@ -83,6 +83,7 @@ import { Route as AiAnalyticsSettingsRouteImport } from './routes/ai-analytics.s
 import { Route as AiAnalyticsStudentRiskRouteImport } from './routes/ai-analytics.student-risk'
 import { Route as AnitsAttendanceRouteImport } from './routes/anits.attendance'
 import { Route as AnitsDashboardRouteImport } from './routes/anits.dashboard'
+import { Route as AnitsFacultyRouteImport } from './routes/anits.faculty'
 import { Route as AnitsForgotPasswordRouteImport } from './routes/anits.forgot-password'
 import { Route as AnitsLoginRouteImport } from './routes/anits.login'
 import { Route as AnitsMyClassesRouteImport } from './routes/anits.my-classes'
@@ -1022,6 +1023,11 @@ const AnitsAttendanceRoute = AnitsAttendanceRouteImport.update({
 const AnitsDashboardRoute = AnitsDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => AnitsRoute,
+} as any)
+const AnitsFacultyRoute = AnitsFacultyRouteImport.update({
+  id: '/faculty',
+  path: '/faculty',
   getParentRoute: () => AnitsRoute,
 } as any)
 const AnitsForgotPasswordRoute = AnitsForgotPasswordRouteImport.update({
@@ -4252,6 +4258,7 @@ export interface FileRoutesByFullPath {
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
   '/anits/attendance': typeof AnitsAttendanceRoute
   '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/faculty': typeof AnitsFacultyRoute
   '/anits/forgot-password': typeof AnitsForgotPasswordRoute
   '/anits/login': typeof AnitsLoginRoute
   '/anits/my-classes': typeof AnitsMyClassesRoute
@@ -4876,6 +4883,7 @@ export interface FileRoutesByTo {
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
   '/anits/attendance': typeof AnitsAttendanceRoute
   '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/faculty': typeof AnitsFacultyRoute
   '/anits/forgot-password': typeof AnitsForgotPasswordRoute
   '/anits/login': typeof AnitsLoginRoute
   '/anits/my-classes': typeof AnitsMyClassesRoute
@@ -5511,6 +5519,7 @@ export interface FileRoutesById {
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
   '/anits/attendance': typeof AnitsAttendanceRoute
   '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/faculty': typeof AnitsFacultyRoute
   '/anits/forgot-password': typeof AnitsForgotPasswordRoute
   '/anits/login': typeof AnitsLoginRoute
   '/anits/my-classes': typeof AnitsMyClassesRoute
@@ -6156,6 +6165,7 @@ export interface FileRouteTypes {
     | '/ai-analytics/student-risk'
     | '/anits/attendance'
     | '/anits/dashboard'
+    | '/anits/faculty'
     | '/anits/forgot-password'
     | '/anits/login'
     | '/anits/my-classes'
@@ -6780,6 +6790,7 @@ export interface FileRouteTypes {
     | '/ai-analytics/student-risk'
     | '/anits/attendance'
     | '/anits/dashboard'
+    | '/anits/faculty'
     | '/anits/forgot-password'
     | '/anits/login'
     | '/anits/my-classes'
@@ -7414,6 +7425,7 @@ export interface FileRouteTypes {
     | '/ai-analytics/student-risk'
     | '/anits/attendance'
     | '/anits/dashboard'
+    | '/anits/faculty'
     | '/anits/forgot-password'
     | '/anits/login'
     | '/anits/my-classes'
@@ -8570,6 +8582,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/anits/dashboard'
       preLoaderRoute: typeof AnitsDashboardRouteImport
+      parentRoute: typeof AnitsRoute
+    }
+    '/anits/faculty': {
+      id: '/anits/faculty'
+      path: '/faculty'
+      fullPath: '/anits/faculty'
+      preLoaderRoute: typeof AnitsFacultyRouteImport
       parentRoute: typeof AnitsRoute
     }
     '/anits/forgot-password': {
@@ -12575,6 +12594,7 @@ const AiAnalyticsRouteWithChildren = AiAnalyticsRoute._addFileChildren(
 interface AnitsRouteChildren {
   AnitsAttendanceRoute: typeof AnitsAttendanceRoute
   AnitsDashboardRoute: typeof AnitsDashboardRoute
+  AnitsFacultyRoute: typeof AnitsFacultyRoute
   AnitsForgotPasswordRoute: typeof AnitsForgotPasswordRoute
   AnitsLoginRoute: typeof AnitsLoginRoute
   AnitsMyClassesRoute: typeof AnitsMyClassesRoute
@@ -12586,6 +12606,7 @@ interface AnitsRouteChildren {
 const AnitsRouteChildren: AnitsRouteChildren = {
   AnitsAttendanceRoute: AnitsAttendanceRoute,
   AnitsDashboardRoute: AnitsDashboardRoute,
+  AnitsFacultyRoute: AnitsFacultyRoute,
   AnitsForgotPasswordRoute: AnitsForgotPasswordRoute,
   AnitsLoginRoute: AnitsLoginRoute,
   AnitsMyClassesRoute: AnitsMyClassesRoute,

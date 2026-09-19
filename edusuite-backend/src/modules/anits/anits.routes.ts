@@ -1768,4 +1768,761 @@ router.get("/super-admin/classes/export", authenticateToken, async (req: Authent
   }
 });
 
+// =========================================================================
+// SUPER ADMIN: FACULTY MANAGEMENT MODULE
+// =========================================================================
+
+// GET /api/anits/super-admin/faculty: Institution-wide Faculty Directory & Metrics
+router.get("/super-admin/faculty", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const todayDayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+
+    // 1. Fetch aggregated stats & supporting relations concurrently
+    const [totalFaculty, activeFaculty, departments, ttAssignedFaculty, allAllocations, allSlots, allAttendance] = await Promise.all([
+      prisma.faculty.count(),
+      prisma.faculty.count({ where: { status: "Active" } }),
+      prisma.department.findMany({ orderBy: { code: "asc" } }),
+      prisma.masterTimetable.findMany({
+        where: { facultyId: { not: null } },
+        distinct: ["facultyId"],
+        select: { facultyId: true },
+      }),
+      prisma.subjectAllocation.findMany({
+        select: {
+          facultyId: true,
+          section: true,
+          course: { select: { code: true, name: true } },
+        },
+      }),
+      prisma.masterTimetable.findMany({
+        where: { facultyId: { not: null } },
+        select: {
+          facultyId: true,
+          day: true,
+          isLab: true,
+          section: true,
+        },
+      }),
+      prisma.attendanceRecord.groupBy({
+        by: ["facultyId"],
+        _count: true,
+        where: { facultyId: { not: null } },
+      }),
+    ]);
+
+    // Build lookup maps for fast in-memory aggregation per faculty
+    const allocMap = new Map<string, { subjects: Set<string>; sections: Set<string> }>();
+    for (const a of allAllocations) {
+      if (!allocMap.has(a.facultyId)) {
+        allocMap.set(a.facultyId, { subjects: new Set(), sections: new Set() });
+      }
+      const item = allocMap.get(a.facultyId)!;
+      if (a.course?.code) item.subjects.add(a.course.code);
+      if (a.section) item.sections.add(a.section.startsWith("Section ") ? a.section : `Section ${a.section}`);
+    }
+
+    const slotMap = new Map<string, { total: number; today: number; sections: Set<string> }>();
+    for (const s of allSlots) {
+      if (!s.facultyId) continue;
+      if (!slotMap.has(s.facultyId)) {
+        slotMap.set(s.facultyId, { total: 0, today: 0, sections: new Set() });
+      }
+      const item = slotMap.get(s.facultyId)!;
+      item.total++;
+      if (s.day.toLowerCase() === todayDayName.toLowerCase()) {
+        item.today++;
+      }
+      if (s.section) item.sections.add(s.section);
+    }
+
+    const attMap = new Map<string, number>();
+    for (const a of allAttendance) {
+      if (a.facultyId) {
+        attMap.set(a.facultyId, a._count);
+      }
+    }
+
+    // 2. Fetch all faculty records
+    const allFaculty = await prisma.faculty.findMany({
+      select: {
+        id: true,
+        rollNumber: true,
+        name: true,
+        email: true,
+        department: true,
+        role: true,
+        status: true,
+        createdAt: true,
+      },
+      orderBy: { name: "asc" },
+    });
+
+    // Map each faculty with live computed metrics
+    const mappedFaculty = allFaculty.map((f) => {
+      const alloc = allocMap.get(f.id);
+      const slot = slotMap.get(f.id);
+      const attCount = attMap.get(f.id) || 0;
+
+      // Combined distinct sections
+      const combinedSections = new Set<string>();
+      alloc?.sections.forEach((sec) => combinedSections.add(sec));
+      slot?.sections.forEach((sec) => combinedSections.add(sec));
+
+      const sectionsStr = combinedSections.size > 0 ? Array.from(combinedSections).sort().join(", ") : "Unassigned";
+      const assignedSubjectsCount = alloc ? alloc.subjects.size : 0;
+      const weeklyTeachingLoad = slot ? slot.total : 0;
+      const todayClassesCount = slot ? slot.today : 0;
+
+      return {
+        id: f.id,
+        rollNumber: f.rollNumber,
+        name: f.name,
+        email: f.email,
+        department: f.department || "General",
+        role: f.role === "hod" ? "Head of Department (HOD)" : "Faculty",
+        rawRole: f.role,
+        status: f.status || "Active",
+        assignedSubjectsCount,
+        assignedSections: sectionsStr,
+        weeklyTeachingLoad,
+        todayClassesCount,
+        attendanceSessionsCount: attCount,
+        createdAt: f.createdAt,
+      };
+    });
+
+    // 3. Filter data
+    let filtered = [...mappedFaculty];
+
+    const deptFilter = (req.query.department as string || "").trim();
+    if (deptFilter && deptFilter !== "All" && deptFilter !== "All Departments") {
+      const matchingDepts = getMatchingDepartments(deptFilter).map((d) => d.toLowerCase());
+      filtered = filtered.filter((f) => matchingDepts.includes(f.department.toLowerCase()));
+    }
+
+    const statusFilter = (req.query.status as string || "").trim();
+    if (statusFilter && statusFilter !== "All" && statusFilter !== "All Statuses") {
+      filtered = filtered.filter((f) => f.status.toLowerCase() === statusFilter.toLowerCase());
+    }
+
+    const searchQuery = (req.query.search as string || "").trim().toLowerCase();
+    if (searchQuery) {
+      filtered = filtered.filter(
+        (f) =>
+          f.name.toLowerCase().includes(searchQuery) ||
+          f.rollNumber.toLowerCase().includes(searchQuery) ||
+          f.email.toLowerCase().includes(searchQuery) ||
+          f.department.toLowerCase().includes(searchQuery)
+      );
+    }
+
+    // 4. Sort data
+    const sortBy = (req.query.sortBy as string || "name").trim();
+    const sortOrder = (req.query.sortOrder as string || "asc").trim().toLowerCase() === "desc" ? "desc" : "asc";
+
+    filtered.sort((a, b) => {
+      let valA: any = (a as any)[sortBy] ?? "";
+      let valB: any = (b as any)[sortBy] ?? "";
+      if (typeof valA === "string") valA = valA.toLowerCase();
+      if (typeof valB === "string") valB = valB.toLowerCase();
+      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    // 5. Paginate data
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string, 10) || 10));
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / pageSize);
+    const paginatedFaculty = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+    return res.json({
+      summary: {
+        totalFaculty,
+        activeFaculty,
+        departmentsCount: departments.length,
+        assignedTimetableFaculty: ttAssignedFaculty.length,
+      },
+      filterOptions: {
+        departments: departments.map((d) => ({ id: d.id, code: d.code, name: d.name })),
+        statuses: ["Active", "Inactive", "Suspended"],
+      },
+      faculty: paginatedFaculty,
+      pagination: {
+        total,
+        page,
+        pageSize,
+        totalPages,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to fetch faculty directory." });
+  }
+});
+
+// GET /api/anits/super-admin/faculty/export: CSV Export of Faculty Directory
+router.get("/super-admin/faculty/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const [allFaculty, allAllocations, allSlots] = await Promise.all([
+      prisma.faculty.findMany({
+        select: { id: true, rollNumber: true, name: true, email: true, department: true, role: true, status: true },
+        orderBy: { name: "asc" },
+      }),
+      prisma.subjectAllocation.findMany({
+        select: { facultyId: true, course: { select: { code: true, name: true } } },
+      }),
+      prisma.masterTimetable.findMany({
+        where: { facultyId: { not: null } },
+        select: { facultyId: true },
+      }),
+    ]);
+
+    const allocMap = new Map<string, Set<string>>();
+    for (const a of allAllocations) {
+      if (!allocMap.has(a.facultyId)) allocMap.set(a.facultyId, new Set());
+      if (a.course?.code) allocMap.get(a.facultyId)!.add(`${a.course.code} - ${a.course.name}`);
+    }
+
+    const slotCountMap = new Map<string, number>();
+    for (const s of allSlots) {
+      if (!s.facultyId) continue;
+      slotCountMap.set(s.facultyId, (slotCountMap.get(s.facultyId) || 0) + 1);
+    }
+
+    let filtered = allFaculty.map((f) => {
+      const subjects = allocMap.get(f.id);
+      const subjectsStr = subjects && subjects.size > 0 ? Array.from(subjects).join("; ") : "None";
+      const load = slotCountMap.get(f.id) || 0;
+      return {
+        rollNumber: f.rollNumber,
+        name: f.name,
+        email: f.email,
+        department: f.department || "General",
+        role: f.role === "hod" ? "HOD" : "Faculty",
+        status: f.status || "Active",
+        weeklyLoad: load,
+        subjects: subjectsStr,
+      };
+    });
+
+    const deptFilter = (req.query.department as string || "").trim();
+    if (deptFilter && deptFilter !== "All" && deptFilter !== "All Departments") {
+      const matchingDepts = getMatchingDepartments(deptFilter).map((d) => d.toLowerCase());
+      filtered = filtered.filter((f) => matchingDepts.includes(f.department.toLowerCase()));
+    }
+
+    const statusFilter = (req.query.status as string || "").trim();
+    if (statusFilter && statusFilter !== "All" && statusFilter !== "All Statuses") {
+      filtered = filtered.filter((f) => f.status.toLowerCase() === statusFilter.toLowerCase());
+    }
+
+    const searchQuery = (req.query.search as string || "").trim().toLowerCase();
+    if (searchQuery) {
+      filtered = filtered.filter(
+        (f) =>
+          f.name.toLowerCase().includes(searchQuery) ||
+          f.rollNumber.toLowerCase().includes(searchQuery) ||
+          f.email.toLowerCase().includes(searchQuery) ||
+          f.department.toLowerCase().includes(searchQuery)
+      );
+    }
+
+    const rows = [
+      ["Faculty ID", "Name", "Email", "Department", "Designation", "Status", "Weekly Load (Periods)", "Assigned Subjects"],
+    ];
+
+    for (const f of filtered) {
+      rows.push([
+        `"${f.rollNumber}"`,
+        `"${f.name.replace(/"/g, '""')}"`,
+        `"${f.email}"`,
+        `"${f.department}"`,
+        `"${f.role}"`,
+        `"${f.status}"`,
+        `"${f.weeklyLoad}"`,
+        `"${f.subjects.replace(/"/g, '""')}"`,
+      ]);
+    }
+
+    const csvContent = rows.map((r) => r.join(",")).join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="anits_faculty_directory.csv"');
+    return res.status(200).send(csvContent);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to export faculty directory." });
+  }
+});
+
+// GET /api/anits/super-admin/faculty/:id: Faculty Detailed Profile, Schedule & Workload
+router.get("/super-admin/faculty/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const todayDate = new Date().toISOString().split("T")[0];
+    const todayDayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+
+    const faculty = await prisma.faculty.findUnique({
+      where: { id },
+      include: {
+        subjectAllocations: {
+          include: { course: true },
+          orderBy: [{ academicYear: "desc" }, { semester: "asc" }],
+        },
+        timetables: {
+          include: { course: true },
+          orderBy: [{ day: "asc" }, { periodNumber: "asc" }],
+        },
+        leaveRequests: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        },
+      },
+    });
+
+    if (!faculty) {
+      return res.status(404).json({ error: "Faculty member not found." });
+    }
+
+    // Workload breakdown
+    const totalWeeklyPeriods = faculty.timetables.length;
+    const labPeriods = faculty.timetables.filter((t) => t.isLab).length;
+    const theoryPeriods = totalWeeklyPeriods - labPeriods;
+
+    // Today's classes
+    const todayClasses = faculty.timetables.filter(
+      (t) => t.day.toLowerCase() === todayDayName.toLowerCase()
+    );
+
+    // Check attendance status for today's classes
+    const todayTimetableIds = todayClasses.map((t) => t.id);
+    const todayAttendance = await prisma.attendanceRecord.findMany({
+      where: {
+        timetableId: { in: todayTimetableIds },
+        date: todayDate,
+      },
+      select: { timetableId: true },
+      distinct: ["timetableId"],
+    });
+    const conductedTimetableIds = new Set(todayAttendance.map((a) => a.timetableId));
+
+    const todaySchedule = todayClasses.map((t) => ({
+      id: t.id,
+      periodNumber: t.periodNumber,
+      startTime: t.startTime,
+      endTime: t.endTime,
+      courseCode: t.course?.code || "N/A",
+      courseName: t.course?.name || "Subject",
+      section: t.section,
+      roomNo: t.roomNo || "Room Unassigned",
+      isLab: t.isLab,
+      attendanceStatus: conductedTimetableIds.has(t.id) ? "Attendance Submitted" : "Pending Attendance",
+    }));
+
+    // Historical attendance records count
+    const totalAttendanceRecords = await prisma.attendanceRecord.count({
+      where: { facultyId: faculty.id },
+    });
+
+    const distinctAttendanceSessions = await prisma.attendanceRecord.findMany({
+      where: { facultyId: faculty.id },
+      select: { date: true, timetableId: true },
+      distinct: ["date", "timetableId"],
+    });
+    const distinctSessionsSubmitted = distinctAttendanceSessions.length;
+
+    const profile = {
+      id: faculty.id,
+      rollNumber: faculty.rollNumber,
+      name: faculty.name,
+      email: faculty.email,
+      department: faculty.department || "General",
+      role: faculty.role,
+      status: faculty.status || "Active",
+      createdAt: faculty.createdAt,
+    };
+
+    return res.json({
+      faculty: profile,
+      profile,
+      todayDay: todayDayName,
+      workload: {
+        totalWeeklyPeriods,
+        weeklyTeachingLoadHours: totalWeeklyPeriods,
+        theoryPeriods,
+        labPeriods,
+        distinctCoursesCount: new Set(faculty.subjectAllocations.map((a) => a.courseId)).size,
+        allocatedSubjectsCount: faculty.subjectAllocations.length,
+        totalTimetableSlots: faculty.timetables.length,
+        totalAllocatedHours: faculty.subjectAllocations.reduce((sum, a) => sum + a.weeklyHours, 0),
+      },
+      allocations: faculty.subjectAllocations.map((a) => ({
+        id: a.id,
+        courseCode: a.course?.code || "N/A",
+        courseName: a.course?.name || "Subject",
+        course: {
+          code: a.course?.code || "N/A",
+          name: a.course?.name || "Subject",
+        },
+        credits: a.course?.credits || 0,
+        category: a.course?.category || "Core",
+        department: a.department,
+        semester: a.semester,
+        section: a.section,
+        academicYear: a.academicYear,
+        weeklyHours: a.weeklyHours,
+        weeklyLoad: a.weeklyHours,
+        status: a.status,
+      })),
+      timetable: faculty.timetables.map((t) => ({
+        id: t.id,
+        day: t.day,
+        dayOfWeek: t.day,
+        periodNumber: t.periodNumber,
+        startTime: t.startTime,
+        endTime: t.endTime,
+        course: {
+          code: t.course?.code || "N/A",
+          name: t.course?.name || "Subject",
+        },
+        courseCode: t.course?.code || "N/A",
+        courseName: t.course?.name || "Subject",
+        section: t.section,
+        room: t.roomNo || "Room TBA",
+        roomNo: t.roomNo || "Room TBA",
+        isLab: t.isLab,
+      })),
+      todaySchedule: todaySchedule.map((s) => ({
+        ...s,
+        course: {
+          code: s.courseCode,
+          name: s.courseName,
+        },
+        room: s.roomNo,
+      })),
+      todaySummary: {
+        day: todayDayName,
+        date: todayDate,
+        totalToday: todayClasses.length,
+        submittedToday: conductedTimetableIds.size,
+        pendingToday: todayClasses.length - conductedTimetableIds.size,
+      },
+      attendanceSummary: {
+        totalRecordsSubmitted: totalAttendanceRecords,
+        distinctSessionsSubmitted: distinctSessionsSubmitted,
+        totalRecordsLogged: totalAttendanceRecords,
+      },
+      leaves: faculty.leaveRequests.map((l) => ({
+        id: l.id,
+        leaveType: l.leaveType,
+        startDate: l.startDate,
+        endDate: l.endDate,
+        days: l.days,
+        status: l.status,
+        reason: l.reason,
+      })),
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to fetch faculty profile." });
+  }
+});
+
+// POST /api/anits/super-admin/faculty: Add New Faculty Member
+router.post("/super-admin/faculty", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const { name, rollNumber, email, password, department, role, status } = req.body;
+
+  if (!name || !rollNumber || !email || !department) {
+    return res.status(400).json({ error: "Name, Faculty ID / Roll Number, Email, and Department are required." });
+  }
+
+  try {
+    const cleanRoll = String(rollNumber).trim().toUpperCase();
+    const cleanEmail = String(email).trim().toLowerCase();
+
+    // Check unique constraints
+    const existing = await prisma.faculty.findFirst({
+      where: {
+        OR: [{ rollNumber: cleanRoll }, { email: cleanEmail }],
+      },
+    });
+
+    if (existing) {
+      if (existing.rollNumber.toUpperCase() === cleanRoll) {
+        return res.status(409).json({ error: `Faculty ID '${cleanRoll}' is already assigned to another faculty member.` });
+      }
+      return res.status(409).json({ error: `Email '${cleanEmail}' is already registered.` });
+    }
+
+    const hashedPassword = await bcrypt.hash(password || "anits@123", 10);
+
+    const newFaculty = await prisma.faculty.create({
+      data: {
+        name: String(name).trim(),
+        rollNumber: cleanRoll,
+        email: cleanEmail,
+        password: hashedPassword,
+        department: String(department).trim().toUpperCase(),
+        role: role === "hod" ? "hod" : "faculty",
+        status: status || "Active",
+      },
+    });
+
+    // Record in AuditLog
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "FACULTY_CREATED",
+        module: "Faculty",
+        targetEntity: "Faculty",
+        targetId: newFaculty.id,
+        status: "Success",
+      },
+    });
+
+    return res.status(201).json({
+      message: "Faculty member created successfully.",
+      faculty: {
+        id: newFaculty.id,
+        rollNumber: newFaculty.rollNumber,
+        name: newFaculty.name,
+        email: newFaculty.email,
+        department: newFaculty.department,
+        role: newFaculty.role,
+        status: newFaculty.status,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to create faculty member." });
+  }
+});
+
+// PUT /api/anits/super-admin/faculty/:id: Update Existing Faculty Member
+router.put("/super-admin/faculty/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const { id } = req.params;
+  const { name, rollNumber, email, department, role, status } = req.body;
+
+  try {
+    const existingFaculty = await prisma.faculty.findUnique({ where: { id } });
+    if (!existingFaculty) {
+      return res.status(404).json({ error: "Faculty member not found." });
+    }
+
+    const updateData: any = {};
+    if (name) updateData.name = String(name).trim();
+    if (department) updateData.department = String(department).trim().toUpperCase();
+    if (role) updateData.role = role === "hod" ? "hod" : "faculty";
+    if (status) updateData.status = status;
+
+    if (rollNumber) {
+      const cleanRoll = String(rollNumber).trim().toUpperCase();
+      if (cleanRoll !== existingFaculty.rollNumber) {
+        const conflict = await prisma.faculty.findUnique({ where: { rollNumber: cleanRoll } });
+        if (conflict) {
+          return res.status(409).json({ error: `Faculty ID '${cleanRoll}' is already in use.` });
+        }
+        updateData.rollNumber = cleanRoll;
+      }
+    }
+
+    if (email) {
+      const cleanEmail = String(email).trim().toLowerCase();
+      if (cleanEmail !== existingFaculty.email) {
+        const conflict = await prisma.faculty.findUnique({ where: { email: cleanEmail } });
+        if (conflict) {
+          return res.status(409).json({ error: `Email '${cleanEmail}' is already in use.` });
+        }
+        updateData.email = cleanEmail;
+      }
+    }
+
+    const updated = await prisma.faculty.update({
+      where: { id },
+      data: updateData,
+    });
+
+    // Record in AuditLog
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "FACULTY_UPDATED",
+        module: "Faculty",
+        targetEntity: "Faculty",
+        targetId: id,
+        status: "Success",
+      },
+    });
+
+    return res.json({
+      message: "Faculty member updated successfully.",
+      faculty: {
+        id: updated.id,
+        rollNumber: updated.rollNumber,
+        name: updated.name,
+        email: updated.email,
+        department: updated.department,
+        role: updated.role,
+        status: updated.status,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to update faculty member." });
+  }
+});
+
+// DELETE & PATCH /deactivate: Safe Faculty Deactivation Preserving Historical Data
+router.delete("/super-admin/faculty/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const faculty = await prisma.faculty.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            timetables: true,
+            attendanceRecords: true,
+            subjectAllocations: true,
+          },
+        },
+      },
+    });
+
+    if (!faculty) {
+      return res.status(404).json({ error: "Faculty member not found." });
+    }
+
+    // Safe deactivation: do not hard-delete if historical records exist
+    const hasHistory =
+      faculty._count.timetables > 0 ||
+      faculty._count.attendanceRecords > 0 ||
+      faculty._count.subjectAllocations > 0;
+
+    const deactivated = await prisma.faculty.update({
+      where: { id },
+      data: { status: "Inactive" },
+    });
+
+    // Record in AuditLog
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "FACULTY_DEACTIVATED",
+        module: "Faculty",
+        targetEntity: "Faculty",
+        targetId: id,
+        status: "Success",
+      },
+    });
+
+    return res.json({
+      message: hasHistory
+        ? "Faculty member has active/historical academic records and has been safely set to 'Inactive'. Historical attendance and timetable data preserved."
+        : "Faculty member has been deactivated.",
+      status: deactivated.status,
+      preservedHistory: {
+        timetableSlots: faculty._count.timetables,
+        attendanceRecords: faculty._count.attendanceRecords,
+        subjectAllocations: faculty._count.subjectAllocations,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to deactivate faculty member." });
+  }
+});
+
+// PATCH deactivation alias
+router.patch("/super-admin/faculty/:id/deactivate", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  const { id } = req.params;
+
+  try {
+    const faculty = await prisma.faculty.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            timetables: true,
+            attendanceRecords: true,
+            subjectAllocations: true,
+          },
+        },
+      },
+    });
+
+    if (!faculty) {
+      return res.status(404).json({ error: "Faculty member not found." });
+    }
+
+    const deactivated = await prisma.faculty.update({
+      where: { id },
+      data: { status: "Inactive" },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "FACULTY_DEACTIVATED",
+        module: "Faculty",
+        targetEntity: "Faculty",
+        targetId: id,
+        status: "Success",
+      },
+    });
+
+    return res.json({
+      message: "Faculty member has been safely set to 'Inactive'. Historical academic data preserved.",
+      status: deactivated.status,
+      preservedHistory: {
+        timetableSlots: faculty._count.timetables,
+        attendanceRecords: faculty._count.attendanceRecords,
+        subjectAllocations: faculty._count.subjectAllocations,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to deactivate faculty member." });
+  }
+});
+
 export default router;

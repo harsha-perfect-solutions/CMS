@@ -56,6 +56,7 @@ export function AnitsSidebar({
           { label: "Master Timetable", href: "/anits/timetable", icon: Calendar },
           { label: "Attendance", href: "/anits/attendance", icon: ClipboardCheck },
           { label: "Classes & Cohorts", href: "/anits/my-classes", icon: BookOpen },
+          { label: "Faculty", href: "/anits/faculty", icon: Users },
           { label: "Students", href: "/anits/my-classes?tab=students", icon: GraduationCap },
           { label: "Rooms", href: "/anits/timetable?tab=rooms", icon: DoorOpen },
           { label: "Reports", href: "/anits/reports", icon: FileBarChart },
