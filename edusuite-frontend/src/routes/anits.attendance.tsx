@@ -826,10 +826,12 @@ function AnitsAttendancePage() {
   const [selectedSubject, setSelectedSubject] = useState<SubjectAttendanceItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loadingStudent, setLoadingStudent] = useState(isStudent);
+  const [studentError, setStudentError] = useState<string | null>(null);
 
   const fetchStudentAttendance = useCallback(async () => {
     try {
       setLoadingStudent(true);
+      setStudentError(null);
       const res = await api.get("/api/attendance/student/my-attendance");
       if (res.data) {
         setStudentProfile(res.data.profile);
@@ -838,7 +840,9 @@ function AnitsAttendancePage() {
         setStudentAlerts(res.data.alerts || []);
       }
     } catch (err: any) {
-      toast.error("Failed to load attendance records.");
+      const msg = err.response?.data?.error || err.message || "Failed to load attendance records.";
+      setStudentError(msg);
+      toast.error(msg);
     } finally {
       setLoadingStudent(false);
     }
@@ -1199,89 +1203,188 @@ function AnitsAttendancePage() {
   // RENDER 2: STUDENT ATTENDANCE PORTAL
   // =========================================================================
   if (isStudent) {
-    if (loadingStudent && !studentProfile) {
+    if (loadingStudent && !studentProfile && !studentError) {
       return (
-        <div className="flex items-center justify-center p-12">
-          <Loader2 className="size-8 animate-spin text-primary" />
+        <div className="p-6 space-y-6 max-w-7xl mx-auto">
+          <div className="h-20 w-full bg-card rounded-2xl border border-border/60 animate-pulse" />
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-24 bg-card rounded-2xl border border-border/60 animate-pulse" />
+            ))}
+          </div>
+          <div className="h-96 bg-card rounded-2xl border border-border/60 animate-pulse" />
         </div>
       );
     }
 
+    if (studentError && !studentProfile) {
+      return (
+        <div className="p-8 text-center bg-card rounded-2xl border border-destructive/30 space-y-4 max-w-lg mx-auto mt-8 shadow-xs">
+          <AlertTriangle className="size-10 text-destructive mx-auto" />
+          <h3 className="font-bold text-base text-foreground">Unable to load attendance data</h3>
+          <p className="text-xs text-muted-foreground">{studentError}</p>
+          <Button onClick={() => fetchStudentAttendance()} className="rounded-xl text-xs font-semibold gap-2">
+            <RefreshCw className="size-3.5" /> Retry
+          </Button>
+        </div>
+      );
+    }
+
+    const isHistoryTab = searchParams.tab === "history";
+
     return (
       <div className="space-y-6">
-        {/* Student Portal Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card p-5 rounded-2xl border border-border/60 shadow-xs">
-          <div>
-            <h2 className="text-xl font-black text-foreground">My Attendance</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              ANITS Academic Attendance Records &middot; AY 2026-27 &middot; Semester {studentProfile?.semester || 5}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleExportStudentCSV}
-              className="h-9 rounded-xl text-xs font-semibold gap-1.5"
-            >
-              <Download className="size-3.5" /> Export Ledger
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchStudentAttendance()}
-              disabled={loadingStudent}
-              className="h-9 rounded-xl text-xs font-semibold gap-1.5"
-            >
-              <RefreshCw className={`size-3.5 ${loadingStudent ? "animate-spin" : ""}`} /> Refresh
-            </Button>
-          </div>
+        {/* Student Navigation Tabs */}
+        <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+          <Button
+            variant={!isHistoryTab ? "default" : "ghost"}
+            size="sm"
+            onClick={() => navigate({ to: "/anits/attendance", search: { tab: undefined } })}
+            className={`rounded-xl text-xs font-semibold gap-2 ${
+              !isHistoryTab
+                ? "bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+            }`}
+          >
+            <ClipboardCheck className="size-3.5" /> My Attendance Summary
+          </Button>
+          <Button
+            variant={isHistoryTab ? "default" : "ghost"}
+            size="sm"
+            onClick={() => navigate({ to: "/anits/attendance", search: { tab: "history" } })}
+            className={`rounded-xl text-xs font-semibold gap-2 ${
+              isHistoryTab
+                ? "bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+            }`}
+          >
+            <Clock className="size-3.5" /> Attendance History Ledger
+          </Button>
         </div>
 
-        {/* Low Attendance Banner Alerts */}
-        {studentAlerts.length > 0 && (
-          <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive space-y-1">
-            <div className="flex items-center gap-2 font-bold text-xs">
-              <AlertTriangle className="size-4" /> LOW ATTENDANCE ALERT (&lt;75% Threshold)
+        {isHistoryTab ? (
+          /* ========================================================================= */
+          /* DEDICATED ATTENDANCE HISTORY VIEW                                         */
+          /* ========================================================================= */
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Attendance History Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card p-5 rounded-2xl border border-border/60 shadow-xs">
+              <div>
+                <h2 className="text-xl font-black text-foreground">Attendance History</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Chronological attendance records for the authenticated student.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate({ to: "/anits/attendance", search: { tab: undefined } })}
+                  className="h-9 rounded-xl text-xs font-semibold gap-1.5"
+                >
+                  <ClipboardCheck className="size-3.5" /> View Summary
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchStudentAttendance()}
+                  disabled={loadingStudent}
+                  className="h-9 rounded-xl text-xs font-semibold gap-1.5"
+                >
+                  <RefreshCw className={`size-3.5 ${loadingStudent ? "animate-spin" : ""}`} /> Refresh
+                </Button>
+              </div>
             </div>
-            <ul className="text-xs list-disc list-inside space-y-0.5 pt-1 text-destructive/90">
-              {studentAlerts.map((alert, idx) => (
-                <li key={idx}>{alert}</li>
-              ))}
-            </ul>
+
+            {/* Attendance History Ledger with Filters & Pagination */}
+            <StudentAttendanceHistory logs={studentHistory} rollNumber={studentProfile?.rollNumber} />
           </div>
-        )}
+        ) : (
+          /* ========================================================================= */
+          /* DEDICATED MY ATTENDANCE SUMMARY VIEW                                      */
+          /* ========================================================================= */
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Student Portal Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card p-5 rounded-2xl border border-border/60 shadow-xs">
+              <div>
+                <h2 className="text-xl font-black text-foreground">My Attendance</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  ANITS Academic Attendance Records &middot; AY 2026-27 &middot; Semester {studentProfile?.semester || 5}
+                </p>
+              </div>
 
-        {/* Summary Metric Cards */}
-        {studentProfile && (
-          <AttendanceSummary
-            profile={studentProfile}
-            schedule={[]}
-            subjects={studentSubjects}
-            onOpenLeaveModal={() => {}}
-            onSelectTab={() => {}}
-          />
-        )}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => navigate({ to: "/anits/attendance", search: { tab: "history" } })}
+                  className="h-9 rounded-xl text-xs font-semibold gap-1.5 bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
+                >
+                  <Clock className="size-3.5" /> Attendance History
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExportStudentCSV}
+                  className="h-9 rounded-xl text-xs font-semibold gap-1.5"
+                >
+                  <Download className="size-3.5" /> Export Ledger
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchStudentAttendance()}
+                  disabled={loadingStudent}
+                  className="h-9 rounded-xl text-xs font-semibold gap-1.5"
+                >
+                  <RefreshCw className={`size-3.5 ${loadingStudent ? "animate-spin" : ""}`} /> Refresh
+                </Button>
+              </div>
+            </div>
 
-        {/* Subject-Wise Table */}
-        <SubjectAttendance
-          subjects={studentSubjects}
-          onSelectSubject={(subject) => {
-            setSelectedSubject(subject);
-            setDrawerOpen(true);
-          }}
-        />
+            {/* Low Attendance Banner Alerts */}
+            {studentAlerts.length > 0 && (
+              <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive space-y-1">
+                <div className="flex items-center gap-2 font-bold text-xs">
+                  <AlertTriangle className="size-4" /> LOW ATTENDANCE ALERT (&lt;75% Threshold)
+                </div>
+                <ul className="text-xs list-disc list-inside space-y-0.5 pt-1 text-destructive/90">
+                  {studentAlerts.map((alert, idx) => (
+                    <li key={idx}>{alert}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
-        {/* Session History Ledger */}
-        <StudentAttendanceHistory logs={studentHistory} />
+            {/* Summary Metric Cards */}
+            {studentProfile && (
+              <AttendanceSummary
+                profile={studentProfile}
+                schedule={[]}
+                subjects={studentSubjects}
+                onOpenLeaveModal={() => {}}
+                onSelectTab={() => {}}
+              />
+            )}
 
-        {/* Subject Drawer Modal */}
-        {drawerOpen && (
-          <AttendanceDrawer
-            subject={selectedSubject}
-            onClose={() => setDrawerOpen(false)}
-          />
+            {/* Subject-Wise Table */}
+            <SubjectAttendance
+              subjects={studentSubjects}
+              onSelectSubject={(subject) => {
+                setSelectedSubject(subject);
+                setDrawerOpen(true);
+              }}
+            />
+
+            {/* Subject Drawer Modal */}
+            {drawerOpen && (
+              <AttendanceDrawer
+                subject={selectedSubject}
+                onClose={() => setDrawerOpen(false)}
+              />
+            )}
+          </div>
         )}
       </div>
     );

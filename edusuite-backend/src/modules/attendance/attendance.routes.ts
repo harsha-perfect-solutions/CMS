@@ -994,9 +994,33 @@ router.get(["/export", "/faculty/export", "/student/export"], authenticateToken,
       where.status = statusFilter;
     }
 
+    const subjectQuery = (req.query.subject || req.query.courseCode) as string;
+    if (subjectQuery && subjectQuery !== "All" && subjectQuery !== "all") {
+      const subjectCondition = [
+        { course: { code: { equals: subjectQuery, mode: "insensitive" as const } } },
+        { course: { name: { contains: subjectQuery, mode: "insensitive" as const } } },
+        { timetable: { course: { code: { equals: subjectQuery, mode: "insensitive" as const } } } },
+      ];
+      if (where.OR) {
+        where.AND = [...(where.AND || []), { OR: subjectCondition }];
+      } else {
+        where.OR = subjectCondition;
+      }
+    }
+
+    const dateFrom = req.query.dateFrom as string;
+    const dateTo = req.query.dateTo as string;
+    if (dateFrom || dateTo) {
+      where.date = {
+        ...(where.date && typeof where.date === "object" ? where.date : {}),
+        ...(dateFrom ? { gte: dateFrom } : {}),
+        ...(dateTo ? { lte: dateTo } : {}),
+      };
+    }
+
     if (timeframe && timeframe !== "all" && timeframe !== "All") {
       const { startDateStr, endDateStr } = getDateBounds(timeframe);
-      where.date = { gte: startDateStr, lte: endDateStr };
+      where.date = { ...(where.date && typeof where.date === "object" ? where.date : {}), gte: startDateStr, lte: endDateStr };
     }
 
     if (searchQuery) {
@@ -2246,7 +2270,7 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
 // ==========================================
 // 14. AUTHENTICATED STUDENT PORTAL ATTENDANCE
 // ==========================================
-router.get(["/student/my-attendance", "/student"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+router.get(["/student/my-attendance", "/student/my-history", "/student"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const authUserId = req.userId;
     const authRole = (req.userRole || "").toLowerCase();
@@ -2489,7 +2513,11 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         timeSlot: r.timetable ? `${r.timetable.startTime || "09:00 AM"} - ${r.timetable.endTime || "10:00 AM"}` : "Scheduled Session",
         subjectCode: courseObj?.code || r.courseId || "SUB",
         subjectName: courseObj?.name || "Department Course",
+        courseCode: courseObj?.code || r.courseId || "SUB",
+        courseName: courseObj?.name || "Department Course",
         facultyName: r.timetable?.faculty?.name || r.faculty?.name || "Faculty not assigned",
+        faculty: r.timetable?.faculty?.name || r.faculty?.name || "Faculty not assigned",
+        section: r.timetable?.section || student.section || "A",
         room: r.timetable?.roomNo || "Room not assigned",
         status: r.status as "Present" | "Absent" | "Late" | "Medical Leave" | "On Duty" | "Holiday",
         mode: "Manual" as const,

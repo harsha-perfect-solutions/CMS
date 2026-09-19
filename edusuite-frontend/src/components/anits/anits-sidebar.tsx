@@ -148,10 +148,27 @@ export function AnitsSidebar({
 
         <nav className="space-y-1">
           {navItems.map((item) => {
-            const isActive =
-              item.href === "/anits/dashboard"
-                ? pathname === "/anits/dashboard"
-                : pathname === item.href || (item.href !== "/anits/dashboard" && pathname.startsWith(item.href));
+            const isActive = (() => {
+              // 1. Exact match on fullPath (including query params, e.g. /anits/attendance?tab=history)
+              if (fullPath === item.href) return true;
+
+              // 2. If the nav item has query params (e.g. /anits/attendance?tab=history), require exact/prefix match on fullPath
+              if (item.href.includes("?")) {
+                return fullPath.startsWith(item.href);
+              }
+
+              // 3. If the current URL has search query params (e.g. ?tab=history), and another sibling nav item has a specific query matching fullPath,
+              // then this base nav item (e.g. /anits/attendance) should NOT be active!
+              if (searchStr && navItems.some((n) => n.href !== item.href && n.href.includes("?") && fullPath.startsWith(n.href))) {
+                return false;
+              }
+
+              // 4. Default pathname matching
+              if (item.href === "/anits/dashboard") {
+                return pathname === "/anits/dashboard";
+              }
+              return pathname === item.href || pathname.startsWith(item.href + "/");
+            })();
 
             const Icon = item.icon;
 

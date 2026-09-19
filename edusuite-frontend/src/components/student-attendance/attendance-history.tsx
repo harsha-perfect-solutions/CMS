@@ -12,13 +12,19 @@ import {
   ChevronRight,
   Filter,
   RotateCcw,
+  Download,
+  CalendarCheck,
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
 } from "lucide-react";
 
 interface AttendanceHistoryProps {
   logs: AttendanceHistoryRecord[];
+  rollNumber?: string;
 }
 
-export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
+export function AttendanceHistory({ logs, rollNumber }: AttendanceHistoryProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [subjectFilter, setSubjectFilter] = useState<string>("All");
@@ -44,9 +50,11 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
       const matchesSearch =
         !searchTerm ||
         log.date.toLowerCase().includes(s) ||
-        log.subjectCode.toLowerCase().includes(s) ||
-        log.subjectName.toLowerCase().includes(s) ||
-        log.facultyName.toLowerCase().includes(s);
+        (log.subjectCode && log.subjectCode.toLowerCase().includes(s)) ||
+        (log.subjectName && log.subjectName.toLowerCase().includes(s)) ||
+        (log.facultyName && log.facultyName.toLowerCase().includes(s)) ||
+        (log.section && log.section.toLowerCase().includes(s)) ||
+        (log.room && log.room.toLowerCase().includes(s));
 
       const matchesStatus = statusFilter === "All" || log.status === statusFilter;
       const matchesSubject = subjectFilter === "All" || log.subjectCode === subjectFilter;
@@ -56,6 +64,17 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
       return matchesSearch && matchesStatus && matchesSubject && matchesDateFrom && matchesDateTo;
     });
   }, [logs, searchTerm, statusFilter, subjectFilter, dateFrom, dateTo]);
+
+  // Compact metrics derived strictly from the filtered history dataset
+  const metrics = useMemo(() => {
+    const total = filteredLogs.length;
+    const present = filteredLogs.filter((l) => l.status === "Present").length;
+    const late = filteredLogs.filter((l) => l.status === "Late").length;
+    const absent = filteredLogs.filter((l) => l.status === "Absent").length;
+    const attended = present + late;
+    const percentage = total > 0 ? Number(((attended / total) * 100).toFixed(1)) : 0;
+    return { total, present, late, absent, attended, percentage };
+  }, [filteredLogs]);
 
   const totalPages = Math.ceil(filteredLogs.length / itemsPerPage) || 1;
   const paginatedLogs = filteredLogs.slice(
@@ -72,34 +91,103 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
     setCurrentPage(1);
   };
 
+  const handleExportFilteredCSV = () => {
+    const csvHeader = "Date,Period,Course Code,Course Name,Faculty,Section,Room,Status,Remarks";
+    const csvRows = filteredLogs.map((l) =>
+      `"${l.date}","${l.period || `Period ${l.periodNumber || 1}`}","${l.subjectCode || ""}","${(l.subjectName || "").replace(/"/g, '""')}","${(l.facultyName || "").replace(/"/g, '""')}","${l.section || "A"}","${l.room || "Room not assigned"}","${l.status}","${(l.remarks || "").replace(/"/g, '""')}"`
+    );
+    const csvContent = [csvHeader, ...csvRows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ANITS_Attendance_${rollNumber || "Student"}_History_${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   const hasActiveFilters = Boolean(
     searchTerm || statusFilter !== "All" || subjectFilter !== "All" || dateFrom || dateTo
   );
 
   return (
     <div className="space-y-6">
+      {/* COMPACT FILTERED SUMMARY METRICS */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs flex items-center gap-3">
+          <div className="size-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
+            <CalendarCheck className="size-5" />
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Total Records</p>
+            <p className="text-xl font-black text-foreground">{metrics.total}</p>
+          </div>
+        </div>
+
+        <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs flex items-center gap-3">
+          <div className="size-10 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="size-5" />
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Present</p>
+            <p className="text-xl font-black text-emerald-600">{metrics.present}</p>
+          </div>
+        </div>
+
+        <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs flex items-center gap-3">
+          <div className="size-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+            <AlertCircle className="size-5" />
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Late</p>
+            <p className="text-xl font-black text-amber-600">{metrics.late}</p>
+          </div>
+        </div>
+
+        <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs flex items-center gap-3">
+          <div className="size-10 rounded-xl bg-rose-500/10 text-rose-600 flex items-center justify-center shrink-0">
+            <XCircle className="size-5" />
+          </div>
+          <div>
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Absent</p>
+            <p className="text-xl font-black text-rose-600">{metrics.absent}</p>
+          </div>
+        </div>
+      </div>
+
       {/* TOOLBAR & FILTERS */}
-      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-4">
+      <div className="p-5 rounded-2xl border border-border/60 bg-card shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Clock className="h-4 w-4 text-[#0b193c] dark:text-blue-400" /> Personal Attendance History &amp; Check-in Ledger
+            <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+              <Clock className="h-4 w-4 text-primary" /> Personal Attendance History Ledger
             </h3>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               Verified classroom check-ins from PostgreSQL &middot; Showing {filteredLogs.length} of {logs.length} sessions
             </p>
           </div>
 
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportFilteredCSV}
+              className="h-8 rounded-xl text-xs font-semibold gap-1.5"
+            >
+              <Download className="size-3.5" /> Export Filtered CSV
+            </Button>
+
             {/* VIEW SWITCHER */}
-            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+            <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl">
               <button
                 onClick={() => setViewType("table")}
                 title="Table view"
-                className={`p-1.5 rounded-lg text-xs font-semibold ${
+                className={`p-1.5 rounded-lg text-xs font-semibold transition-all ${
                   viewType === "table"
-                    ? "bg-white dark:bg-slate-900 text-[#0b193c] dark:text-blue-400 shadow-sm"
-                    : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                    ? "bg-card text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 <List className="h-3.5 w-3.5" />
@@ -107,10 +195,10 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
               <button
                 onClick={() => setViewType("timeline")}
                 title="Timeline view"
-                className={`p-1.5 rounded-lg text-xs font-semibold ${
+                className={`p-1.5 rounded-lg text-xs font-semibold transition-all ${
                   viewType === "timeline"
-                    ? "bg-white dark:bg-slate-900 text-[#0b193c] dark:text-blue-400 shadow-sm"
-                    : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                    ? "bg-card text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 <Layers className="h-3.5 w-3.5" />
@@ -122,10 +210,10 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
         {/* Filter Controls Row */}
         <div className="flex flex-wrap items-center gap-2.5 pt-1">
           {/* SEARCH */}
-          <div className="relative w-full sm:w-56">
-            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+          <div className="relative w-full sm:w-60">
+            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
             <Input
-              placeholder="Search subject, faculty, date..."
+              placeholder="Search code, subject, faculty..."
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value);
@@ -143,7 +231,7 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
               setCurrentPage(1);
             }}
             aria-label="Filter by Subject"
-            className="h-8 text-xs px-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 font-medium"
+            className="h-8 text-xs px-2.5 rounded-xl border border-border bg-card text-foreground font-medium"
           >
             <option value="All">All Subjects ({availableSubjects.length})</option>
             {availableSubjects.map((s) => (
@@ -161,13 +249,43 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
               setCurrentPage(1);
             }}
             aria-label="Filter by Status"
-            className="h-8 text-xs px-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 font-medium"
+            className="h-8 text-xs px-2.5 rounded-xl border border-border bg-card text-foreground font-medium"
           >
             <option value="All">All Statuses</option>
             <option value="Present">Present</option>
             <option value="Late">Late</option>
             <option value="Absent">Absent</option>
           </select>
+
+          {/* DATE FROM */}
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-muted-foreground font-medium">From:</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setCurrentPage(1);
+              }}
+              aria-label="Filter From Date"
+              className="h-8 text-xs px-2 rounded-xl border border-border bg-card text-foreground"
+            />
+          </div>
+
+          {/* DATE TO */}
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-muted-foreground font-medium">To:</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setCurrentPage(1);
+              }}
+              aria-label="Filter To Date"
+              className="h-8 text-xs px-2 rounded-xl border border-border bg-card text-foreground"
+            />
+          </div>
 
           {/* PAGE SIZE SELECTOR */}
           <select
@@ -177,7 +295,7 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
               setCurrentPage(1);
             }}
             aria-label="Items per page"
-            className="h-8 text-xs px-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 font-medium"
+            className="h-8 text-xs px-2.5 rounded-xl border border-border bg-card text-foreground font-medium ml-auto"
           >
             <option value="25">25 per page</option>
             <option value="50">50 per page</option>
@@ -190,7 +308,7 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
               variant="ghost"
               size="sm"
               onClick={handleResetFilters}
-              className="h-8 text-xs font-semibold gap-1 text-slate-500 hover:text-slate-900 dark:hover:text-white px-2"
+              className="h-8 text-xs font-semibold gap-1 text-muted-foreground hover:text-foreground px-2"
             >
               <RotateCcw className="size-3" /> Reset Filters
             </Button>
@@ -200,58 +318,58 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
 
       {/* RENDER TABLE OR TIMELINE */}
       {viewType === "table" ? (
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+        <div className="rounded-2xl border border-border/60 bg-card shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-slate-500 font-semibold">
+                <tr className="border-b border-border/60 bg-muted/40 text-muted-foreground font-semibold">
                   <th className="p-3.5">Date</th>
-                  <th className="p-3.5">Day</th>
                   <th className="p-3.5">Period</th>
-                  <th className="p-3.5">Subject</th>
+                  <th className="p-3.5">Course Code</th>
+                  <th className="p-3.5">Course Name</th>
                   <th className="p-3.5">Faculty</th>
+                  <th className="p-3.5">Section</th>
                   <th className="p-3.5">Room</th>
-                  <th className="p-3.5">Time</th>
                   <th className="p-3.5">Status</th>
                   <th className="p-3.5">Remarks</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              <tbody className="divide-y divide-border/40">
                 {paginatedLogs.length > 0 ? (
                   paginatedLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                      <td className="p-3.5 font-mono text-slate-700 dark:text-slate-300 font-semibold">{log.date}</td>
-                      <td className="p-3.5 text-slate-500">{log.day}</td>
-                      <td className="p-3.5 font-mono font-bold text-[#0b193c] dark:text-blue-400">{log.period}</td>
-                      <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">
-                        <div>{log.subjectName}</div>
-                        <span className="text-[10px] text-slate-400 font-mono font-normal">{log.subjectCode}</span>
-                      </td>
-                      <td className="p-3.5 text-slate-600 dark:text-slate-300">{log.facultyName}</td>
-                      <td className="p-3.5 font-mono text-slate-500">{log.room}</td>
-                      <td className="p-3.5 font-mono text-emerald-600 font-bold">{log.timeSlot}</td>
-                      <td className="p-3.5">
+                    <tr key={log.id} className="hover:bg-muted/30 transition-colors">
+                      <td className="p-3.5 font-mono text-foreground font-semibold whitespace-nowrap">{log.date}</td>
+                      <td className="p-3.5 font-mono font-bold text-primary whitespace-nowrap">{log.period}</td>
+                      <td className="p-3.5 font-mono text-foreground font-bold whitespace-nowrap">{log.subjectCode}</td>
+                      <td className="p-3.5 font-semibold text-foreground max-w-xs">{log.subjectName}</td>
+                      <td className="p-3.5 text-muted-foreground whitespace-nowrap">{log.facultyName}</td>
+                      <td className="p-3.5 font-mono text-muted-foreground whitespace-nowrap">{log.section || "A"}</td>
+                      <td className="p-3.5 font-mono text-muted-foreground whitespace-nowrap">{log.room || "Room not assigned"}</td>
+                      <td className="p-3.5 whitespace-nowrap">
                         <Badge
                           className={
                             log.status === "Present"
-                              ? "bg-emerald-500/10 text-emerald-600"
+                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20"
                               : log.status === "Late"
-                                ? "bg-amber-500/10 text-amber-600"
+                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20"
                                 : log.status === "Absent"
-                                  ? "bg-red-500/10 text-red-600"
-                                  : "bg-purple-500/10 text-purple-600"
+                                  ? "bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/20"
+                                  : "bg-purple-500/15 text-purple-700 dark:text-purple-400 border border-purple-500/20"
                           }
                         >
                           {log.status}
                         </Badge>
                       </td>
-                      <td className="p-3.5 text-slate-500 max-w-xs truncate">{log.remarks}</td>
+                      <td className="p-3.5 text-muted-foreground max-w-xs truncate">{log.remarks}</td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-slate-500 font-medium">
-                      No attendance records available yet.
+                    <td colSpan={9} className="p-10 text-center text-muted-foreground font-medium space-y-1">
+                      <p className="text-sm font-semibold text-foreground">No attendance history available yet.</p>
+                      <p className="text-xs text-muted-foreground">
+                        Attendance records will appear here after your faculty submits class attendance.
+                      </p>
                     </td>
                   </tr>
                 )}
@@ -259,8 +377,11 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
             </table>
           </div>
 
-          <div className="p-3.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900 flex items-center justify-between text-xs text-slate-500">
-            <span>Showing {paginatedLogs.length} of {filteredLogs.length} logs</span>
+          <div className="p-3.5 border-t border-border/60 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground">
+            <span>
+              Showing {paginatedLogs.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–
+              {Math.min(currentPage * itemsPerPage, filteredLogs.length)} of {filteredLogs.length} records
+            </span>
 
             <div className="flex items-center gap-2">
               <Button
@@ -272,7 +393,7 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <span className="font-semibold text-slate-700 dark:text-slate-300">Page {currentPage} of {totalPages}</span>
+              <span className="font-semibold text-foreground">Page {currentPage} of {totalPages}</span>
               <Button
                 variant="outline"
                 size="sm"
@@ -287,51 +408,56 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
         </div>
       ) : (
         /* TIMELINE VIEW */
-        <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-6 shadow-sm">
-          <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Chronological Class Timeline View</h4>
+        <div className="p-6 rounded-2xl border border-border/60 bg-card space-y-6 shadow-xs">
           {paginatedLogs.length > 0 ? (
-            <div className="relative border-l-2 border-slate-200 dark:border-slate-800 ml-4 space-y-6 pl-6">
-              {paginatedLogs.map((log) => (
-                <div key={log.id} className="relative group">
-                  <div
-                    className={`absolute -left-[31px] top-1.5 w-4 h-4 rounded-full border-2 border-white dark:border-slate-900 ${
-                      log.status === "Present"
-                        ? "bg-emerald-500"
-                        : log.status === "Late"
-                          ? "bg-amber-500"
-                          : "bg-red-500"
-                    }`}
-                  />
-                  <div className="p-4 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-mono text-[#0b193c] dark:text-blue-400 font-bold">{log.date} &middot; {log.timeSlot}</span>
-                      <Badge
-                        className={
-                          log.status === "Present"
-                            ? "bg-emerald-500/10 text-emerald-600"
-                            : log.status === "Late"
-                              ? "bg-amber-500/10 text-amber-600"
-                              : "bg-red-500/10 text-red-600"
-                        }
-                      >
-                        {log.status}
-                      </Badge>
-                    </div>
-                    <h5 className="text-sm font-bold text-slate-900 dark:text-white">{log.subjectCode} - {log.subjectName}</h5>
-                    <p className="text-xs text-slate-500">Faculty: {log.facultyName} &middot; Room: {log.room}</p>
-                    <p className="text-[11px] text-slate-600 italic">"{log.remarks}"</p>
+            paginatedLogs.map((log) => (
+              <div key={log.id} className="flex gap-4 items-start border-l-2 border-primary/30 pl-4 relative py-1">
+                <div
+                  className={`absolute -left-[9px] top-2 size-4 rounded-full border-2 border-background ${
+                    log.status === "Present"
+                      ? "bg-emerald-500"
+                      : log.status === "Late"
+                        ? "bg-amber-500"
+                        : "bg-rose-500"
+                  }`}
+                />
+                <div className="flex-1 space-y-1 bg-muted/30 p-3.5 rounded-xl border border-border/40">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-foreground">
+                      {log.subjectName} ({log.subjectCode})
+                    </span>
+                    <Badge
+                      className={
+                        log.status === "Present"
+                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                          : log.status === "Late"
+                            ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                            : "bg-rose-500/15 text-rose-700 dark:text-rose-400"
+                      }
+                    >
+                      {log.status}
+                    </Badge>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                    <span>Date: {log.date}</span>
+                    <span>Period: {log.period}</span>
+                    <span>Faculty: {log.facultyName}</span>
+                    <span>Section: {log.section || "A"}</span>
+                    <span>Room: {log.room || "Room not assigned"}</span>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))
           ) : (
-            <div className="p-8 text-center text-slate-500 font-medium">
-              No attendance records available yet.
+            <div className="p-8 text-center text-muted-foreground space-y-1">
+              <p className="text-sm font-semibold text-foreground">No attendance history available yet.</p>
+              <p className="text-xs text-muted-foreground">
+                Attendance records will appear here after your faculty submits class attendance.
+              </p>
             </div>
           )}
         </div>
       )}
-
     </div>
   );
 }

@@ -54,10 +54,15 @@ export interface AttendanceHistoryRecord {
   date: string;
   day: string;
   period: string;
+  periodNumber?: number;
   timeSlot: string;
   subjectCode: string;
   subjectName: string;
+  courseCode?: string;
+  courseName?: string;
   facultyName: string;
+  faculty?: string;
+  section?: string;
   room: string;
   status: "Present" | "Absent" | "Late" | "Medical Leave" | "On Duty" | "Holiday";
   mode: "Biometric" | "QR Code" | "Manual";
