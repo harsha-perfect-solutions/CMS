@@ -15,6 +15,9 @@ import {
   Clock,
   Search,
   Filter,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -88,37 +91,121 @@ function AnitsAttendancePage() {
   // ADMIN & INSTITUTION-WIDE ATTENDANCE LEDGER STATE (POSTGRESQL DRIVEN)
   // =========================================================================
   const [ledgerRecords, setLedgerRecords] = useState<any[]>([]);
+  const [ledgerStats, setLedgerStats] = useState({
+    total: 0,
+    present: 0,
+    absent: 0,
+    late: 0,
+    attendanceRate: "0.0",
+  });
+  const [pagination, setPagination] = useState({
+    page: 1,
+    pageSize: 25,
+    total: 0,
+    totalPages: 1,
+  });
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [ledgerStatus, setLedgerStatus] = useState("All");
   const [ledgerDept, setLedgerDept] = useState(department || "All");
   const [ledgerTimeframe, setLedgerTimeframe] = useState("all");
+  const [departmentsList, setDepartmentsList] = useState<any[]>([]);
 
-  const fetchLedger = useCallback(async () => {
+  // Tab 2: Today's Scheduled Sessions State
+  const [todaySessions, setTodaySessions] = useState<any[]>([]);
+  const [todaySummary, setTodaySummary] = useState({
+    totalSessions: 0,
+    submittedSessions: 0,
+    pendingSessions: 0,
+  });
+  const [todayLoading, setTodayLoading] = useState(false);
+  const [todayDeptFilter, setTodayDeptFilter] = useState("All");
+  const [todayStatusFilter, setTodayStatusFilter] = useState("ALL");
+  const [todaySearch, setTodaySearch] = useState("");
+
+  // Load active departments from PostgreSQL
+  useEffect(() => {
+    if (isAdmin || isHod) {
+      api.get("/api/anits/departments")
+        .then((res) => {
+          if (res.data && Array.isArray(res.data.departments)) {
+            setDepartmentsList(res.data.departments);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isAdmin, isHod]);
+
+  const fetchLedger = useCallback(async (pageToFetch: number = 1) => {
     try {
       setLedgerLoading(true);
-      const params: Record<string, string> = {};
+      const params: Record<string, any> = {
+        page: pageToFetch,
+        pageSize: 25,
+      };
       if (ledgerStatus && ledgerStatus !== "All") params.status = ledgerStatus;
       if (ledgerDept && ledgerDept !== "All") params.department = ledgerDept;
       if (ledgerSearch.trim()) params.search = ledgerSearch.trim();
       if (ledgerTimeframe && ledgerTimeframe !== "all") params.timeframe = ledgerTimeframe;
 
-      const res = await api.get("/api/attendance/ledger", { params });
-      if (Array.isArray(res.data)) {
-        setLedgerRecords(res.data);
+      try {
+        const res = await api.get("/api/anits/super-admin/attendance", { params });
+        if (res.data) {
+          setLedgerRecords(res.data.data || []);
+          if (res.data.statistics) {
+            setLedgerStats(res.data.statistics);
+          }
+          if (res.data.pagination) {
+            setPagination(res.data.pagination);
+          }
+        }
+      } catch {
+        // Fallback for HOD or legacy routes
+        const res = await api.get("/api/attendance/ledger", { params });
+        if (Array.isArray(res.data)) {
+          setLedgerRecords(res.data);
+          const p = res.data.filter((r: any) => r.status === "Present").length;
+          const a = res.data.filter((r: any) => r.status === "Absent").length;
+          const l = res.data.filter((r: any) => r.status === "Late").length;
+          const t = res.data.length;
+          const rate = t > 0 ? (((p + l) / t) * 100).toFixed(1) : "0.0";
+          setLedgerStats({ total: t, present: p, absent: a, late: l, attendanceRate: rate });
+          setPagination({ page: 1, pageSize: t, total: t, totalPages: 1 });
+        }
       }
-    } catch (err: any) {
+    } catch {
       toast.error("Failed to load attendance ledger from PostgreSQL.");
     } finally {
       setLedgerLoading(false);
     }
   }, [ledgerStatus, ledgerDept, ledgerSearch, ledgerTimeframe]);
 
+  const fetchTodaySessions = useCallback(async () => {
+    try {
+      setTodayLoading(true);
+      const params: Record<string, any> = {};
+      if (todayDeptFilter && todayDeptFilter !== "All") params.department = todayDeptFilter;
+      if (todayStatusFilter && todayStatusFilter !== "ALL") params.status = todayStatusFilter;
+      if (todaySearch.trim()) params.search = todaySearch.trim();
+
+      const res = await api.get("/api/anits/super-admin/attendance/today", { params });
+      if (res.data) {
+        setTodaySessions(res.data.sessions || []);
+        if (res.data.summary) {
+          setTodaySummary(res.data.summary);
+        }
+      }
+    } catch {
+      // Fallback
+    } finally {
+      setTodayLoading(false);
+    }
+  }, [todayDeptFilter, todayStatusFilter, todaySearch]);
+
   const handleExportLedgerCSV = async () => {
     try {
       const token = localStorage.getItem("token") || localStorage.getItem("cms_token");
-      const url = new URL("http://localhost:5000/api/attendance/export");
-      url.searchParams.set("format", "csv");
+      const url = new URL("http://localhost:5000/api/anits/super-admin/attendance/export");
       if (ledgerDept && ledgerDept !== "All") url.searchParams.set("department", ledgerDept);
       if (ledgerStatus && ledgerStatus !== "All") url.searchParams.set("status", ledgerStatus);
       if (ledgerSearch.trim()) url.searchParams.set("search", ledgerSearch.trim());
@@ -143,11 +230,33 @@ function AnitsAttendancePage() {
     }
   };
 
+  const handleRefresh = async () => {
+    if (ledgerLoading || todayLoading) return;
+    const toastId = toast.loading("Refreshing ANITS attendance data from PostgreSQL...");
+    try {
+      await Promise.all([fetchLedger(pagination.page), fetchTodaySessions()]);
+      toast.dismiss(toastId);
+      toast.success("Attendance records synchronized with PostgreSQL.");
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Failed to refresh attendance data.");
+    }
+  };
+
+  const handleClearFilters = () => {
+    setLedgerSearch("");
+    setLedgerStatus("All");
+    setLedgerDept("All");
+    setLedgerTimeframe("all");
+    fetchLedger(1);
+  };
+
   useEffect(() => {
     if (isAdmin || isHod) {
-      fetchLedger();
+      fetchLedger(1);
+      fetchTodaySessions();
     }
-  }, [isAdmin, isHod, fetchLedger]);
+  }, [isAdmin, isHod, fetchLedger, fetchTodaySessions]);
 
   const fetchFacultyAttendance = useCallback(async () => {
     try {
@@ -466,12 +575,6 @@ function AnitsAttendancePage() {
   // =========================================================================
   // RENDER 3: HOD & ADMIN INSTITUTION-WIDE ATTENDANCE LEDGER
   // =========================================================================
-  const presentCount = ledgerRecords.filter((r) => r.status === "Present").length;
-  const absentCount = ledgerRecords.filter((r) => r.status === "Absent").length;
-  const lateCount = ledgerRecords.filter((r) => r.status === "Late").length;
-  const totalEntries = ledgerRecords.length;
-  const avgAttendancePct = totalEntries > 0 ? (((presentCount + lateCount) / totalEntries) * 100).toFixed(1) : "0.0";
-
   return (
     <div className="space-y-6">
       {/* Header Banner with Action Buttons */}
@@ -497,11 +600,11 @@ function AnitsAttendancePage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => fetchLedger()}
-            disabled={ledgerLoading}
+            onClick={handleRefresh}
+            disabled={ledgerLoading || todayLoading}
             className="h-9 rounded-xl text-xs font-semibold gap-1.5 bg-card hover:bg-muted/50 border-border/70"
           >
-            <RefreshCw className={`size-3.5 ${ledgerLoading ? "animate-spin" : ""}`} /> Refresh
+            <RefreshCw className={`size-3.5 ${ledgerLoading || todayLoading ? "animate-spin" : ""}`} /> Refresh
           </Button>
         </div>
       </div>
@@ -510,10 +613,10 @@ function AnitsAttendancePage() {
       <Tabs defaultValue="ledger" className="space-y-4">
         <TabsList className="bg-card border border-border/60 p-1 rounded-xl">
           <TabsTrigger value="ledger" className="rounded-lg text-xs font-semibold gap-1.5">
-            <ClipboardCheck className="size-3.5" /> Attendance Ledger ({totalEntries})
+            <ClipboardCheck className="size-3.5" /> Attendance Ledger ({ledgerStats.total})
           </TabsTrigger>
           <TabsTrigger value="sessions" className="rounded-lg text-xs font-semibold gap-1.5">
-            <CalendarCheck className="size-3.5" /> Today's Scheduled Sessions
+            <CalendarCheck className="size-3.5" /> Today's Scheduled Sessions ({todaySummary.totalSessions})
           </TabsTrigger>
         </TabsList>
 
@@ -523,26 +626,28 @@ function AnitsAttendancePage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
               <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Total Records</span>
-              <div className="text-2xl font-black text-foreground mt-1">{totalEntries}</div>
-              <p className="text-[10px] text-muted-foreground mt-0.5">PostgreSQL ledger rows</p>
+              <div className="text-2xl font-black text-foreground mt-1">{ledgerStats.total}</div>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Matching active filter scope</p>
             </Card>
 
             <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
               <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Present</span>
-              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{presentCount}</div>
-              <p className="text-[10px] text-emerald-600/80 font-medium mt-0.5">Marked present</p>
+              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{ledgerStats.present}</div>
+              <p className="text-[10px] text-emerald-600/80 font-medium mt-0.5">Marked present in ledger</p>
             </Card>
 
             <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
               <span className="text-[11px] font-bold text-rose-600 uppercase tracking-wider">Absent</span>
-              <div className="text-2xl font-black text-rose-600 mt-1">{absentCount}</div>
-              <p className="text-[10px] text-rose-600/80 font-medium mt-0.5">Marked absent</p>
+              <div className="text-2xl font-black text-rose-600 mt-1">{ledgerStats.absent}</div>
+              <p className="text-[10px] text-rose-600/80 font-medium mt-0.5">Marked absent in ledger</p>
             </Card>
 
             <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
               <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider">Attendance Rate</span>
-              <div className="text-2xl font-black text-blue-600 mt-1">{avgAttendancePct}%</div>
-              <p className="text-[10px] text-muted-foreground mt-0.5">Overall cohort average</p>
+              <div className="text-2xl font-black text-blue-600 mt-1">{ledgerStats.attendanceRate}%</div>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                {ledgerStats.late > 0 ? `${ledgerStats.late} late arrivals counted` : "Verified PostgreSQL ledger"}
+              </p>
             </Card>
           </div>
 
@@ -560,7 +665,7 @@ function AnitsAttendancePage() {
                 />
               </div>
 
-              {/* Filters dropdowns */}
+              {/* Filters dropdowns & Clear */}
               <div className="flex items-center gap-2 flex-wrap">
                 {/* Department filter */}
                 {isAdmin && (
@@ -571,14 +676,24 @@ function AnitsAttendancePage() {
                     className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
                   >
                     <option value="All">All Departments</option>
-                    <option value="CSE">CSE</option>
-                    <option value="AI&ML">AI&amp;ML</option>
-                    <option value="AI&DS">AI&amp;DS</option>
-                    <option value="IT">IT</option>
-                    <option value="EEE">EEE</option>
-                    <option value="ECE">ECE</option>
-                    <option value="CIVIL">CIVIL</option>
-                    <option value="MECHANICAL">MECHANICAL</option>
+                    {departmentsList.length > 0 ? (
+                      departmentsList.map((d) => (
+                        <option key={d.id} value={d.code}>
+                          {d.code} - {d.name}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="CSE">CSE</option>
+                        <option value="AI&ML">AI&amp;ML</option>
+                        <option value="AI&DS">AI&amp;DS</option>
+                        <option value="IT">IT</option>
+                        <option value="EEE">EEE</option>
+                        <option value="ECE">ECE</option>
+                        <option value="CIVIL">CIVIL</option>
+                        <option value="MECHANICAL">MECHANICAL</option>
+                      </>
+                    )}
                   </select>
                 )}
 
@@ -607,6 +722,18 @@ function AnitsAttendancePage() {
                   <option value="weekly">Past 7 Days</option>
                   <option value="monthly">Past 30 Days</option>
                 </select>
+
+                {/* Clear Filters Button */}
+                {(ledgerSearch || ledgerStatus !== "All" || ledgerDept !== "All" || ledgerTimeframe !== "all") && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleClearFilters}
+                    className="h-8.5 text-xs rounded-lg gap-1 text-muted-foreground hover:text-foreground px-2"
+                  >
+                    <RotateCcw className="size-3" /> Clear
+                  </Button>
+                )}
               </div>
             </div>
           </Card>
@@ -620,7 +747,9 @@ function AnitsAttendancePage() {
               </div>
             ) : ledgerRecords.length === 0 ? (
               <div className="p-12 text-center text-xs text-muted-foreground">
-                No attendance ledger records found matching the current filters.
+                {ledgerSearch || ledgerStatus !== "All" || ledgerDept !== "All" || ledgerTimeframe !== "all"
+                  ? "No attendance ledger records match the current filters."
+                  : "No attendance ledger records exist in PostgreSQL."}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -633,6 +762,7 @@ function AnitsAttendancePage() {
                       <th className="py-3 px-4">Student</th>
                       <th className="py-3 px-4">Course</th>
                       <th className="py-3 px-4">Faculty</th>
+                      <th className="py-3 px-4">Room</th>
                       <th className="py-3 px-4">Status</th>
                     </tr>
                   </thead>
@@ -647,7 +777,9 @@ function AnitsAttendancePage() {
                         </td>
                         <td className="py-2.5 px-4 whitespace-nowrap">
                           <span className="font-bold text-foreground">{rec.department}</span>
-                          <span className="text-muted-foreground ml-1">Sem {rec.semester || 1} ({rec.section || "A"})</span>
+                          <span className="text-muted-foreground ml-1">
+                            {rec.semester ? `Sem ${rec.semester}` : ""} ({rec.section || "A"})
+                          </span>
                         </td>
                         <td className="py-2.5 px-4">
                           <div className="font-bold text-foreground">{rec.studentName}</div>
@@ -659,6 +791,9 @@ function AnitsAttendancePage() {
                         </td>
                         <td className="py-2.5 px-4 text-muted-foreground whitespace-nowrap">
                           {rec.instructor}
+                        </td>
+                        <td className="py-2.5 px-4 text-muted-foreground whitespace-nowrap font-mono text-[11px]">
+                          {rec.room || "Room N/A"}
                         </td>
                         <td className="py-2.5 px-4 whitespace-nowrap">
                           <Badge
@@ -680,23 +815,183 @@ function AnitsAttendancePage() {
                 </table>
               </div>
             )}
+
+            {/* Pagination Controls */}
+            {pagination.totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 border-t border-border/50 bg-muted/10 text-xs text-muted-foreground">
+                <div>
+                  Showing{" "}
+                  <span className="font-semibold text-foreground">
+                    {(pagination.page - 1) * pagination.pageSize + 1}
+                  </span>{" "}
+                  to{" "}
+                  <span className="font-semibold text-foreground">
+                    {Math.min(pagination.page * pagination.pageSize, pagination.total)}
+                  </span>{" "}
+                  of <span className="font-semibold text-foreground">{pagination.total}</span> records
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pagination.page <= 1 || ledgerLoading}
+                    onClick={() => fetchLedger(pagination.page - 1)}
+                    className="h-8 px-2 rounded-lg text-xs gap-1 border-border/60"
+                  >
+                    <ChevronLeft className="size-3.5" /> Prev
+                  </Button>
+                  <span className="text-xs px-2 font-medium text-foreground">
+                    {pagination.page} / {pagination.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={pagination.page >= pagination.totalPages || ledgerLoading}
+                    onClick={() => fetchLedger(pagination.page + 1)}
+                    className="h-8 px-2 rounded-lg text-xs gap-1 border-border/60"
+                  >
+                    Next <ChevronRight className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </Card>
         </TabsContent>
 
         {/* TAB 2: TODAY'S SCHEDULED SESSIONS */}
         <TabsContent value="sessions" className="space-y-4">
-          <Card className="rounded-xl border-border/60 overflow-hidden bg-card">
-            <CardHeader className="bg-muted/15 border-b border-border/40 py-4 px-6">
-              <CardTitle className="text-sm font-bold">Today's Department Sessions</CardTitle>
-              <CardDescription className="text-xs">Live attendance verification across scheduled periods</CardDescription>
-            </CardHeader>
-            <CardContent className="p-0">
-              <TodayClasses
-                classes={facultyClasses}
-                onTakeAttendance={loadRosterForSlot}
-                onViewRegister={loadRosterForSlot}
-              />
-            </CardContent>
+          {/* Today Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Scheduled Today</span>
+              <div className="text-2xl font-black text-foreground mt-1">{todaySummary.totalSessions}</div>
+              <p className="text-[10px] text-muted-foreground mt-0.5">MasterTimetable sessions across ANITS</p>
+            </Card>
+
+            <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+              <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Attendance Submitted</span>
+              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{todaySummary.submittedSessions}</div>
+              <p className="text-[10px] text-emerald-600/80 font-medium mt-0.5">Verified distinct sessions marked</p>
+            </Card>
+
+            <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+              <span className="text-[11px] font-bold text-amber-600 uppercase tracking-wider">Attendance Pending</span>
+              <div className="text-2xl font-black text-amber-600 mt-1">{todaySummary.pendingSessions}</div>
+              <p className="text-[10px] text-amber-600/80 font-medium mt-0.5">Awaiting faculty submission</p>
+            </Card>
+          </div>
+
+          {/* Today Filter Bar */}
+          <Card className="rounded-xl border border-border/60 shadow-xs p-3.5 bg-card">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="relative flex-1 min-w-0">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={todaySearch}
+                  onChange={(e) => setTodaySearch(e.target.value)}
+                  placeholder="Filter sessions by course code, faculty, room..."
+                  className="h-8.5 pl-8.5 text-xs bg-muted/30 border-border/60 rounded-lg w-full"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={todayDeptFilter}
+                  onChange={(e) => setTodayDeptFilter(e.target.value)}
+                  aria-label="Filter Sessions by Department"
+                  className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="All">All Departments</option>
+                  {departmentsList.map((d) => (
+                    <option key={d.id} value={d.code}>
+                      {d.code} - {d.name}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={todayStatusFilter}
+                  onChange={(e) => setTodayStatusFilter(e.target.value)}
+                  aria-label="Filter Sessions by Status"
+                  className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="ALL">All Sessions</option>
+                  <option value="SUBMITTED">Submitted Only</option>
+                  <option value="PENDING">Pending Only</option>
+                </select>
+              </div>
+            </div>
+          </Card>
+
+          {/* Today Sessions Table */}
+          <Card className="rounded-xl border border-border/60 shadow-xs overflow-hidden bg-card">
+            {todayLoading ? (
+              <div className="p-12 text-center">
+                <Loader2 className="size-8 animate-spin text-primary mx-auto mb-2" />
+                <p className="text-xs text-muted-foreground font-semibold">Loading today's scheduled timetable sessions...</p>
+              </div>
+            ) : todaySessions.length === 0 ? (
+              <div className="p-12 text-center text-xs text-muted-foreground">
+                No scheduled timetable sessions found matching the current filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-muted/30 border-b border-border/50 text-muted-foreground font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Period &amp; Time</th>
+                      <th className="py-3 px-4">Dept &amp; Section</th>
+                      <th className="py-3 px-4">Course / Subject</th>
+                      <th className="py-3 px-4">Faculty</th>
+                      <th className="py-3 px-4">Room</th>
+                      <th className="py-3 px-4">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40">
+                    {todaySessions.map((session) => (
+                      <tr key={session.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <div className="font-bold text-foreground">Period {session.period}</div>
+                          <div className="text-[11px] text-muted-foreground font-mono">{session.startTime} - {session.endTime}</div>
+                        </td>
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          <span className="font-bold text-foreground">{session.department}</span>
+                          <span className="text-muted-foreground ml-1">Sem {session.semester} ({session.section})</span>
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <div className="font-bold text-foreground">{session.courseCode}</div>
+                          <div className="text-[11px] text-muted-foreground truncate max-w-48">{session.courseTitle}</div>
+                        </td>
+                        <td className="py-2.5 px-4 whitespace-nowrap text-foreground font-medium">
+                          {session.instructor}
+                        </td>
+                        <td className="py-2.5 px-4 whitespace-nowrap font-mono text-[11px] text-muted-foreground">
+                          {session.room}
+                        </td>
+                        <td className="py-2.5 px-4 whitespace-nowrap">
+                          {session.status === "SUBMITTED" ? (
+                            <Badge
+                              variant="outline"
+                              className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[11px] font-bold gap-1"
+                            >
+                              <CheckCircle2 className="size-3" /> SUBMITTED
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-[11px] font-bold gap-1"
+                            >
+                              <Clock className="size-3" /> PENDING
+                            </Badge>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Card>
         </TabsContent>
       </Tabs>

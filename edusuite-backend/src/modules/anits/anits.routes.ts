@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../db";
 import { authenticateToken, AuthenticatedRequest } from "../auth/auth.routes";
+import { getMatchingDepartments } from "../attendance/attendance.routes";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "edusuite_super_secret_key_change_me_in_production";
@@ -445,6 +446,404 @@ router.get("/academic-year", authenticateToken, async (_req: AuthenticatedReques
     return res.json({ academicYear: latestTimetable?.academicYear || "2026-27" });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// =========================================================================
+// GET /api/anits/departments: Active Institutional Departments from PostgreSQL
+// =========================================================================
+router.get("/departments", authenticateToken, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const departments = await prisma.department.findMany({
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        hodName: true,
+        status: true,
+      },
+      orderBy: { code: "asc" },
+    });
+    return res.json({ departments });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper to parse date bounds for ledger queries
+function parseLedgerDateBounds(timeframe?: string, dateParam?: string) {
+  if (dateParam && dateParam !== "all" && dateParam !== "All") {
+    return { startDateStr: dateParam, endDateStr: dateParam };
+  }
+  if (!timeframe || timeframe === "all" || timeframe === "All") {
+    return null; // no date restriction
+  }
+  const now = new Date();
+  const endDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+  const startObj = new Date(now);
+  if (timeframe === "daily" || timeframe === "today") {
+    return { startDateStr: endDateStr, endDateStr };
+  } else if (timeframe === "weekly" || timeframe === "7days") {
+    startObj.setDate(startObj.getDate() - 6);
+  } else if (timeframe === "monthly" || timeframe === "30days") {
+    startObj.setDate(startObj.getDate() - 29);
+  }
+  const startDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(startObj);
+  return { startDateStr, endDateStr };
+}
+
+// Helper to build attendance record filter where clause
+function buildAttendanceWhereClause(query: {
+  search?: string;
+  department?: string;
+  status?: string;
+  timeframe?: string;
+  date?: string;
+}) {
+  const where: any = {};
+
+  // Department filter
+  const dept = (query.department || "").trim();
+  if (dept && dept !== "All" && dept !== "All Departments") {
+    const matching = getMatchingDepartments(dept);
+    where.OR = [
+      { user: { department: { in: matching, mode: "insensitive" } } },
+      { timetable: { branch: { in: matching, mode: "insensitive" } } },
+      { course: { department: { in: matching, mode: "insensitive" } } },
+    ];
+  }
+
+  // Status filter
+  const status = (query.status || "").trim();
+  if (status && status !== "All" && status !== "All Statuses") {
+    const normStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+    where.status = normStatus;
+  }
+
+  // Date filter
+  const bounds = parseLedgerDateBounds(query.timeframe, query.date);
+  if (bounds) {
+    where.date = { gte: bounds.startDateStr, lte: bounds.endDateStr };
+  }
+
+  // Search filter
+  const search = (query.search || "").trim();
+  if (search) {
+    const searchConditions = [
+      { user: { name: { contains: search, mode: "insensitive" as const } } },
+      { user: { rollNumber: { contains: search, mode: "insensitive" as const } } },
+      { course: { code: { contains: search, mode: "insensitive" as const } } },
+      { course: { name: { contains: search, mode: "insensitive" as const } } },
+      { timetable: { course: { code: { contains: search, mode: "insensitive" as const } } } },
+      { timetable: { course: { name: { contains: search, mode: "insensitive" as const } } } },
+      { timetable: { faculty: { name: { contains: search, mode: "insensitive" as const } } } },
+      { faculty: { name: { contains: search, mode: "insensitive" as const } } },
+      { timetable: { roomNo: { contains: search, mode: "insensitive" as const } } },
+    ];
+    if (where.OR) {
+      where.AND = [{ OR: where.OR }, { OR: searchConditions }];
+      delete where.OR;
+    } else {
+      where.OR = searchConditions;
+    }
+  }
+
+  return where;
+}
+
+// =========================================================================
+// GET /api/anits/super-admin/attendance: Paginated Institutional Attendance Ledger
+// =========================================================================
+router.get("/super-admin/attendance", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 25));
+    const skip = (page - 1) * pageSize;
+    const sort = (req.query.sort as string) === "asc" ? "asc" : "desc";
+
+    const where = buildAttendanceWhereClause(req.query as any);
+
+    // Calculate aggregated statistics under the EXACT same filter scope
+    const total = await prisma.attendanceRecord.count({ where });
+    const statusQuery = (req.query.status as string || "").trim();
+    const hasStatusFilter = statusQuery && statusQuery !== "All" && statusQuery !== "All Statuses";
+
+    let present = 0;
+    let absent = 0;
+    let late = 0;
+
+    if (hasStatusFilter) {
+      const norm = statusQuery.charAt(0).toUpperCase() + statusQuery.slice(1).toLowerCase();
+      if (norm === "Present") {
+        present = total;
+      } else if (norm === "Absent") {
+        absent = total;
+      } else if (norm === "Late") {
+        late = total;
+      }
+    } else {
+      [present, absent, late] = await Promise.all([
+        prisma.attendanceRecord.count({ where: { ...where, status: "Present" } }),
+        prisma.attendanceRecord.count({ where: { ...where, status: "Absent" } }),
+        prisma.attendanceRecord.count({ where: { ...where, status: "Late" } }),
+      ]);
+    }
+
+    const attendanceRate = total > 0 ? (((present + late) / total) * 100).toFixed(1) : "0.0";
+
+    const records = await prisma.attendanceRecord.findMany({
+      where,
+      include: {
+        user: { select: { id: true, name: true, rollNumber: true, department: true, section: true, semester: true } },
+        course: { select: { id: true, code: true, name: true, department: true } },
+        faculty: { select: { id: true, name: true, rollNumber: true, department: true } },
+        timetable: {
+          select: {
+            id: true,
+            branch: true,
+            semester: true,
+            section: true,
+            day: true,
+            periodNumber: true,
+            startTime: true,
+            endTime: true,
+            roomNo: true,
+            academicYear: true,
+            course: { select: { id: true, code: true, name: true } },
+            faculty: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: [{ date: sort }, { periodNumber: sort }],
+      skip,
+      take: pageSize,
+    });
+
+    const data = records.map((r) => ({
+      id: r.id,
+      date: r.date,
+      periodNumber: r.periodNumber || r.timetable?.periodNumber || 1,
+      studentId: r.userId,
+      studentName: r.user?.name || "Student",
+      rollNo: r.user?.rollNumber || "N/A",
+      department: r.user?.department || r.timetable?.branch || r.course?.department || "Unassigned",
+      section: r.user?.section || r.timetable?.section || "A",
+      semester: r.user?.semester || r.timetable?.semester || null,
+      courseCode: r.course?.code || r.timetable?.course?.code || "N/A",
+      courseTitle: r.course?.name || r.timetable?.course?.name || "Subject Lecture",
+      instructor: r.faculty?.name || r.timetable?.faculty?.name || "Faculty information unavailable",
+      room: r.timetable?.roomNo || "Room N/A",
+      status: r.status,
+      remarks: r.remarks || null,
+    }));
+
+    const totalPages = Math.ceil(total / pageSize) || 1;
+
+    return res.json({
+      data,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages,
+      },
+      statistics: {
+        total,
+        present,
+        absent,
+        late,
+        attendanceRate,
+      },
+    });
+  } catch (error: any) {
+    console.error("Super Admin Attendance API error:", error);
+    return res.status(500).json({ error: error.message || "Failed to fetch attendance records." });
+  }
+});
+
+// =========================================================================
+// GET /api/anits/super-admin/attendance/today: Today's Scheduled Sessions with Submission Status
+// =========================================================================
+router.get("/super-admin/attendance/today", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const now = new Date();
+    const todayDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(now);
+    const todayDay = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: "Asia/Kolkata" }).format(now);
+
+    const latestTimetable = await prisma.masterTimetable.findFirst({
+      select: { academicYear: true },
+      orderBy: { updatedAt: "desc" },
+    });
+    const academicYear = latestTimetable?.academicYear || "2026-27";
+
+    const deptFilter = (req.query.department as string || "").trim();
+    const statusFilter = (req.query.status as string || "").trim().toUpperCase();
+    const search = (req.query.search as string || "").trim();
+
+    const timetableWhere: any = {
+      academicYear,
+      day: todayDay,
+    };
+
+    if (deptFilter && deptFilter !== "All" && deptFilter !== "ALL" && deptFilter !== "All Departments") {
+      const matchingDepts = getMatchingDepartments(deptFilter);
+      timetableWhere.branch = { in: matchingDepts, mode: "insensitive" };
+    }
+
+    if (search) {
+      timetableWhere.OR = [
+        { course: { code: { contains: search, mode: "insensitive" } } },
+        { course: { name: { contains: search, mode: "insensitive" } } },
+        { faculty: { name: { contains: search, mode: "insensitive" } } },
+        { roomNo: { contains: search, mode: "insensitive" } },
+        { branch: { contains: search, mode: "insensitive" } },
+        { section: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    // Fetch today's scheduled timetable slots
+    const sessions = await prisma.masterTimetable.findMany({
+      where: timetableWhere,
+      include: {
+        course: { select: { id: true, code: true, name: true, department: true } },
+        faculty: { select: { id: true, name: true, rollNumber: true, department: true } },
+      },
+      orderBy: [{ branch: "asc" }, { semester: "asc" }, { section: "asc" }, { periodNumber: "asc" }],
+    });
+
+    const sessionIds = sessions.map((s) => s.id);
+
+    // Find which sessions have attendance submitted today
+    const submittedRecords = await prisma.attendanceRecord.findMany({
+      where: {
+        timetableId: { in: sessionIds },
+        date: todayDate,
+      },
+      select: { timetableId: true },
+      distinct: ["timetableId"],
+    });
+
+    const submittedSet = new Set(submittedRecords.map((r) => r.timetableId));
+
+    let mappedSessions = sessions.map((s) => {
+      const isSubmitted = submittedSet.has(s.id);
+      return {
+        id: s.id,
+        timetableId: s.id,
+        department: s.branch,
+        semester: s.semester,
+        section: s.section,
+        period: s.periodNumber,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        courseCode: s.course?.code || "N/A",
+        courseTitle: s.course?.name || "Subject Lecture",
+        instructor: s.faculty?.name || "Faculty Unassigned",
+        room: s.roomNo || "Room N/A",
+        isLab: s.isLab,
+        status: isSubmitted ? "SUBMITTED" : "PENDING",
+        academicYear: s.academicYear,
+        day: s.day,
+      };
+    });
+
+    // Apply status filter if specified
+    if (statusFilter === "SUBMITTED") {
+      mappedSessions = mappedSessions.filter((s) => s.status === "SUBMITTED");
+    } else if (statusFilter === "PENDING") {
+      mappedSessions = mappedSessions.filter((s) => s.status === "PENDING");
+    }
+
+    const totalSessions = sessions.length;
+    const submittedSessions = submittedSet.size;
+    const pendingSessions = Math.max(0, totalSessions - submittedSessions);
+
+    return res.json({
+      today: {
+        date: todayDate,
+        day: todayDay,
+      },
+      summary: {
+        totalSessions,
+        submittedSessions,
+        pendingSessions,
+      },
+      sessions: mappedSessions,
+    });
+  } catch (error: any) {
+    console.error("Super Admin Today Sessions API error:", error);
+    return res.status(500).json({ error: error.message || "Failed to fetch today's sessions." });
+  }
+});
+
+// =========================================================================
+// GET /api/anits/super-admin/attendance/export: Filtered CSV Export
+// =========================================================================
+router.get("/super-admin/attendance/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const where = buildAttendanceWhereClause(req.query as any);
+
+    const records = await prisma.attendanceRecord.findMany({
+      where,
+      include: {
+        user: { select: { name: true, rollNumber: true, department: true, section: true } },
+        course: { select: { code: true, name: true, department: true } },
+        faculty: { select: { name: true } },
+        timetable: {
+          select: {
+            branch: true,
+            section: true,
+            periodNumber: true,
+            roomNo: true,
+            course: { select: { code: true, name: true } },
+            faculty: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: [{ date: "desc" }, { periodNumber: "desc" }],
+    });
+
+    const csvHeader = "Date,Student Name,Roll Number,Department,Subject,Course Code,Faculty,Section,Period,Room,Status";
+    const csvRows = records.map((r) => {
+      const date = r.date;
+      const studentName = (r.user?.name || "Student").replace(/"/g, '""');
+      const rollNo = (r.user?.rollNumber || "N/A").replace(/"/g, '""');
+      const dept = (r.user?.department || r.timetable?.branch || r.course?.department || "Unassigned").replace(/"/g, '""');
+      const subject = (r.course?.name || r.timetable?.course?.name || "Subject Lecture").replace(/"/g, '""');
+      const courseCode = (r.course?.code || r.timetable?.course?.code || "N/A").replace(/"/g, '""');
+      const faculty = (r.faculty?.name || r.timetable?.faculty?.name || "Faculty information unavailable").replace(/"/g, '""');
+      const section = (r.user?.section || r.timetable?.section || "A").replace(/"/g, '""');
+      const period = `Period ${r.periodNumber || r.timetable?.periodNumber || 1}`;
+      const room = (r.timetable?.roomNo || "Room N/A").replace(/"/g, '""');
+      const status = r.status;
+
+      return `"${date}","${studentName}","${rollNo}","${dept}","${subject}","${courseCode}","${faculty}","${section}","${period}","${room}","${status}"`;
+    });
+
+    const csvContent = [csvHeader, ...csvRows].join("\n");
+    const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="ANITS_Master_Attendance_Ledger_${todayStr}.csv"`);
+    return res.send(csvContent);
+  } catch (error: any) {
+    console.error("Super Admin Attendance Export error:", error);
+    return res.status(500).json({ error: error.message || "Failed to export attendance." });
   }
 });
 

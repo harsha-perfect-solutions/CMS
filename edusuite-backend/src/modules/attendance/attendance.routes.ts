@@ -496,7 +496,10 @@ router.get("/ledger", authenticateToken, async (req: AuthenticatedRequest, res: 
 
     const statusFilter = req.query.status as string;
     const searchQuery = (req.query.search as string || "").trim();
-    const timeframe = (req.query.timeframe as string) || "daily";
+    const userRoleNorm = (req.userRole || "").toLowerCase();
+    const isSuperOrAdmin = ["super_admin", "admin", "principal", "anits_admin"].includes(userRoleNorm);
+    const defaultTimeframe = isSuperOrAdmin ? "all" : "daily";
+    const timeframe = (req.query.timeframe as string) || defaultTimeframe;
     const requestedDate = req.query.date as string;
 
     const where: any = {};
@@ -509,7 +512,7 @@ router.get("/ledger", authenticateToken, async (req: AuthenticatedRequest, res: 
       where.status = statusFilter;
     }
 
-    if (timeframe && timeframe !== "all") {
+    if (timeframe && timeframe !== "all" && timeframe !== "All") {
       const { startDateStr, endDateStr } = getDateBounds(timeframe, requestedDate);
       where.date = { gte: startDateStr, lte: endDateStr };
     }
@@ -980,7 +983,12 @@ router.get(["/export", "/faculty/export", "/student/export"], authenticateToken,
       }
     }
 
-    if (timeframe && timeframe !== "all") {
+    const statusFilter = req.query.status as string;
+    if (statusFilter && statusFilter !== "All" && statusFilter !== "All Statuses") {
+      where.status = statusFilter;
+    }
+
+    if (timeframe && timeframe !== "all" && timeframe !== "All") {
       const { startDateStr, endDateStr } = getDateBounds(timeframe);
       where.date = { gte: startDateStr, lte: endDateStr };
     }
@@ -1010,7 +1018,7 @@ router.get(["/export", "/faculty/export", "/student/export"], authenticateToken,
         timetable: { include: { course: true, faculty: true } },
       },
       orderBy: { date: "desc" },
-      take: 1000,
+      take: 2000,
     });
 
     await auditLog(
@@ -1044,6 +1052,29 @@ router.get(["/export", "/faculty/export", "/student/export"], authenticateToken,
       }
 
       return res.json(studentExportData);
+    }
+
+    const isSuperAdmin = ["super_admin", "admin", "principal", "anits_admin"].includes(authRole);
+    if (isSuperAdmin && (req.query.format === "csv" || req.headers["accept"] === "text/csv")) {
+      const csvHeader = "Date,Student Name,Roll Number,Department,Subject,Course Code,Faculty,Section,Period,Room,Status";
+      const csvRows = records.map((r) => {
+        const d = r.date;
+        const sName = (r.user?.name || "Student").replace(/"/g, '""');
+        const roll = (r.user?.rollNumber || "N/A").replace(/"/g, '""');
+        const dept = (r.user?.department || r.timetable?.branch || r.course?.department || "Unassigned").replace(/"/g, '""');
+        const subj = (r.course?.name || r.timetable?.course?.name || "Subject Lecture").replace(/"/g, '""');
+        const code = (r.course?.code || r.timetable?.course?.code || "N/A").replace(/"/g, '""');
+        const fac = (r.faculty?.name || r.timetable?.faculty?.name || "Faculty information unavailable").replace(/"/g, '""');
+        const sec = (r.user?.section || r.timetable?.section || "A").replace(/"/g, '""');
+        const per = `Period ${r.periodNumber || r.timetable?.periodNumber || 1}`;
+        const rm = (r.timetable?.roomNo || "Room N/A").replace(/"/g, '""');
+        const st = r.status;
+        return `"${d}","${sName}","${roll}","${dept}","${subj}","${code}","${fac}","${sec}","${per}","${rm}","${st}"`;
+      });
+      const csvOutput = [csvHeader, ...csvRows].join("\n");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="ANITS_Master_Attendance_Ledger_${new Date().toISOString().split("T")[0]}.csv"`);
+      return res.send(csvOutput);
     }
 
     const exportData = records.map((r) => ({
