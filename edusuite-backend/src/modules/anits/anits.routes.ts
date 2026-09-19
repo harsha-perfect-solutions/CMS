@@ -1110,4 +1110,662 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
   }
 });
 
+// =========================================================================
+// SUPER ADMIN: CLASSES & STUDENT COHORTS MANAGEMENT
+// =========================================================================
+
+function resolveDepartmentName(deptCode: string, deptsList: { code: string; name: string }[]): string {
+  const match = deptsList.find(
+    (d) =>
+      d.code.toLowerCase() === deptCode.toLowerCase() ||
+      (deptCode.toLowerCase() === "me" && d.code.toLowerCase() === "mechanical") ||
+      (deptCode.toLowerCase() === "ce" && d.code.toLowerCase() === "civil") ||
+      (deptCode.toLowerCase() === "cs" && d.code.toLowerCase() === "cse")
+  );
+  return match ? match.name : deptCode;
+}
+
+function resolveCohortStudentCount(
+  branch: string,
+  semester: number,
+  section: string,
+  studentGroups: { department: string | null; semester: number | null; section: string | null; _count: { id: number } }[]
+): number {
+  const depts = getMatchingDepartments(branch).map((d) => d.toLowerCase());
+  const cleanSec = (section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+  let count = 0;
+  for (const sg of studentGroups) {
+    if (!sg.department) continue;
+    if (
+      depts.includes(sg.department.toLowerCase()) &&
+      sg.semester === semester &&
+      (sg.section?.toUpperCase() === cleanSec || sg.section?.toUpperCase() === `SECTION ${cleanSec}`)
+    ) {
+      count += sg._count.id;
+    }
+  }
+  return count;
+}
+
+function encodeClassKey(branch: string, semester: number, section: string, courseId: string): string {
+  return `${encodeURIComponent(branch)}_${semester}_${encodeURIComponent(section)}_${courseId}`;
+}
+
+function decodeClassKey(key: string): { branch: string; semester: number; section: string; courseId: string } | null {
+  try {
+    const parts = key.split("_");
+    if (parts.length < 4) return null;
+    const branch = decodeURIComponent(parts[0]);
+    const semester = parseInt(parts[1], 10);
+    const section = decodeURIComponent(parts[2]);
+    const courseId = parts.slice(3).join("_");
+    return { branch, semester, section, courseId };
+  } catch {
+    return null;
+  }
+}
+
+// GET /api/anits/super-admin/classes: Institutional Classes & Student Cohorts Directory
+router.get("/super-admin/classes", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const [departments, allActiveCourses, timetableGroups, studentGroups, totalStudentsCount, timetableSlots] = await Promise.all([
+      prisma.department.findMany({ orderBy: { code: "asc" } }),
+      prisma.course.findMany({
+        where: {
+          OR: [{ status: "Active" }, { status: "Approved" }, { isOffered: true }],
+        },
+        select: { id: true, code: true, name: true, faculty: true, department: true, semester: true },
+        orderBy: { code: "asc" },
+      }),
+      prisma.masterTimetable.groupBy({
+        by: ["branch", "semester", "section", "courseId"],
+        _count: { _all: true },
+      }),
+      prisma.student.groupBy({
+        by: ["department", "semester", "section"],
+        _count: { id: true },
+        where: { status: { not: "Inactive" } },
+      }),
+      prisma.student.count({ where: { status: { not: "Inactive" } } }),
+      prisma.masterTimetable.findMany({
+        where: { facultyId: { not: null }, courseId: { not: null } },
+        select: { branch: true, semester: true, section: true, courseId: true, faculty: { select: { id: true, name: true } } },
+        distinct: ["branch", "semester", "section", "courseId", "facultyId"],
+      }),
+    ]);
+
+    const courseMap = new Map(allActiveCourses.map((c) => [c.id, c]));
+
+    const facultyMap = new Map<string, { id: string; name: string }[]>();
+    for (const slot of timetableSlots) {
+      if (!slot.courseId || !slot.faculty) continue;
+      const key = `${slot.branch}_${slot.semester}_${slot.section}_${slot.courseId}`;
+      if (!facultyMap.has(key)) facultyMap.set(key, []);
+      facultyMap.get(key)!.push(slot.faculty);
+    }
+
+    const classList = timetableGroups
+      .filter((g) => g.courseId !== null)
+      .map((g) => {
+        const course = courseMap.get(g.courseId!);
+        const cKey = `${g.branch}_${g.semester}_${g.section}_${g.courseId}`;
+        const faculties = facultyMap.get(cKey) || [];
+        const facultyNames = faculties.map((f) => f.name);
+        const facultyName =
+          facultyNames.length > 0 ? facultyNames.join(", ") : course?.faculty || "Faculty Unassigned";
+        const facultyId = faculties.length > 0 ? faculties[0].id : null;
+
+        const studentsCount = resolveCohortStudentCount(g.branch, g.semester, g.section, studentGroups);
+        const normDept = g.branch === "ME" ? "MECHANICAL" : g.branch;
+        const deptName = resolveDepartmentName(normDept, departments);
+
+        return {
+          classKey: encodeClassKey(g.branch, g.semester, g.section, g.courseId!),
+          branch: g.branch,
+          department: normDept,
+          departmentName: deptName,
+          semester: g.semester,
+          section: g.section,
+          courseId: g.courseId!,
+          courseCode: course?.code || "N/A",
+          courseName: course?.name || "Unnamed Course",
+          academicYear: "2026-27",
+          facultyId,
+          facultyName,
+          studentsCount,
+          weeklyPeriods: g._count._all,
+          status: "Active",
+        };
+      });
+
+    let activeCohortTotal = 0;
+    const countedCohorts = new Set<string>();
+    for (const item of classList) {
+      const cohortKey = `${item.branch}_${item.semester}_${item.section}`;
+      if (!countedCohorts.has(cohortKey)) {
+        countedCohorts.add(cohortKey);
+        activeCohortTotal += item.studentsCount;
+      }
+    }
+
+    let filtered = [...classList];
+
+    const deptFilter = (req.query.department as string || "").trim();
+    if (deptFilter && deptFilter !== "All" && deptFilter !== "All Departments") {
+      const matchingDepts = getMatchingDepartments(deptFilter).map((d) => d.toLowerCase());
+      filtered = filtered.filter(
+        (c) =>
+          matchingDepts.includes(c.department.toLowerCase()) ||
+          matchingDepts.includes(c.branch.toLowerCase())
+      );
+    }
+
+    const courseFilter = (req.query.courseId as string || req.query.course as string || "").trim();
+    if (courseFilter && courseFilter !== "All" && courseFilter !== "All Courses") {
+      filtered = filtered.filter(
+        (c) => c.courseId === courseFilter || c.courseCode.toLowerCase() === courseFilter.toLowerCase()
+      );
+    }
+
+    const sectionFilter = (req.query.section as string || "").trim();
+    if (sectionFilter && sectionFilter !== "All" && sectionFilter !== "All Sections") {
+      const cleanFilter = sectionFilter.replace(/^Section\s+/i, "").trim().toUpperCase();
+      filtered = filtered.filter((c) => {
+        const cSec = (c.section || "").replace(/^Section\s+/i, "").trim().toUpperCase();
+        return cSec === cleanFilter;
+      });
+    }
+
+    const semesterFilter = (req.query.semester as string || "").trim();
+    if (semesterFilter && semesterFilter !== "All" && semesterFilter !== "All Semesters") {
+      const semNum = parseInt(semesterFilter.replace(/[^0-9]/g, ""), 10);
+      if (!isNaN(semNum)) {
+        filtered = filtered.filter((c) => c.semester === semNum);
+      }
+    }
+
+    const searchQuery = (req.query.search as string || "").trim().toLowerCase();
+    if (searchQuery) {
+      filtered = filtered.filter(
+        (c) =>
+          c.courseCode.toLowerCase().includes(searchQuery) ||
+          c.courseName.toLowerCase().includes(searchQuery) ||
+          c.facultyName.toLowerCase().includes(searchQuery) ||
+          c.department.toLowerCase().includes(searchQuery) ||
+          c.section.toLowerCase().includes(searchQuery)
+      );
+    }
+
+    const sortBy = (req.query.sortBy as string || "courseCode").trim();
+    const sortOrder = (req.query.sortOrder as string || "asc").trim().toLowerCase() === "desc" ? "desc" : "asc";
+
+    filtered.sort((a, b) => {
+      let valA: any = (a as any)[sortBy] ?? "";
+      let valB: any = (b as any)[sortBy] ?? "";
+      if (typeof valA === "string") valA = valA.toLowerCase();
+      if (typeof valB === "string") valB = valB.toLowerCase();
+      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string, 10) || 10));
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / pageSize);
+    const paginatedClasses = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+    const distinctSections = [...new Set(classList.map((c) => c.section))].sort();
+    const distinctSemesters = [...new Set(classList.map((c) => c.semester))].sort((a, b) => a - b);
+    const distinctCourseOptions = allActiveCourses.map((c) => ({
+      id: c.id,
+      code: c.code,
+      name: c.name,
+      department: c.department,
+    }));
+
+    return res.json({
+      summary: {
+        activeCourses: allActiveCourses.length,
+        activeClasses: classList.length,
+        enrolledStudents: totalStudentsCount,
+        activeCohortStudents: activeCohortTotal,
+        departmentsCount: departments.length,
+        academicYear: "2026-27",
+      },
+      filterOptions: {
+        departments: departments.map((d) => ({ id: d.id, code: d.code, name: d.name })),
+        courses: distinctCourseOptions,
+        sections: distinctSections,
+        semesters: distinctSemesters,
+      },
+      classes: paginatedClasses,
+      pagination: {
+        total,
+        page,
+        pageSize,
+        totalPages,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to fetch classes & student cohorts." });
+  }
+});
+
+// GET /api/anits/super-admin/classes/detail: Class Sessions, Attendance & Roster
+router.get("/super-admin/classes/detail", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    let branch = (req.query.branch as string || "").trim();
+    let semester = parseInt(req.query.semester as string, 10);
+    let section = (req.query.section as string || "").trim();
+    let courseId = (req.query.courseId as string || "").trim();
+
+    if (req.query.classKey) {
+      const decoded = decodeClassKey(req.query.classKey as string);
+      if (decoded) {
+        branch = decoded.branch;
+        semester = decoded.semester;
+        section = decoded.section;
+        courseId = decoded.courseId;
+      }
+    }
+
+    if (!branch || isNaN(semester) || !section || !courseId) {
+      return res.status(400).json({ error: "Invalid parameters. branch, semester, section, and courseId are required." });
+    }
+
+    const course = await prisma.course.findUnique({
+      where: { id: courseId },
+    });
+
+    if (!course) {
+      return res.status(404).json({ error: "Course not found." });
+    }
+
+    const timetableSlots = await prisma.masterTimetable.findMany({
+      where: {
+        branch,
+        semester,
+        section,
+        courseId,
+      },
+      include: {
+        faculty: { select: { id: true, name: true, email: true, rollNumber: true, department: true } },
+      },
+      orderBy: [
+        { day: "asc" },
+        { periodNumber: "asc" },
+      ],
+    });
+
+    const timetableIds = timetableSlots.map((s) => s.id);
+
+    const assignedFaculties = timetableSlots
+      .map((s) => s.faculty)
+      .filter((f): f is NonNullable<typeof f> => f !== null);
+    const uniqueFaculties = Array.from(new Map(assignedFaculties.map((f) => [f.id, f])).values());
+
+    const depts = getMatchingDepartments(branch);
+    const cleanSec = section.replace(/^Section\s+/i, "").trim().toUpperCase();
+
+    const students = await prisma.student.findMany({
+      where: {
+        department: { in: depts, mode: "insensitive" },
+        semester,
+        section: { in: [cleanSec, `Section ${cleanSec}`] },
+        status: { not: "Inactive" },
+      },
+      select: {
+        id: true,
+        name: true,
+        rollNumber: true,
+        email: true,
+        department: true,
+        semester: true,
+        section: true,
+        status: true,
+        studentType: true,
+      },
+      orderBy: { rollNumber: "asc" },
+    });
+
+    const studentIds = students.map((s) => s.id);
+
+    const attendanceRecords = await prisma.attendanceRecord.findMany({
+      where: {
+        OR: [
+          { timetableId: { in: timetableIds } },
+          { courseId, userId: { in: studentIds } },
+        ],
+      },
+      select: {
+        id: true,
+        userId: true,
+        date: true,
+        periodNumber: true,
+        status: true,
+        timetableId: true,
+      },
+    });
+
+    const studentAttMap = new Map<string, { total: number; present: number; late: number; absent: number }>();
+    for (const r of attendanceRecords) {
+      if (!studentAttMap.has(r.userId)) {
+        studentAttMap.set(r.userId, { total: 0, present: 0, late: 0, absent: 0 });
+      }
+      const st = studentAttMap.get(r.userId)!;
+      st.total++;
+      if (r.status === "Present") st.present++;
+      else if (r.status === "Late") st.late++;
+      else if (r.status === "Absent") st.absent++;
+    }
+
+    const studentRoster = students.map((s) => {
+      const att = studentAttMap.get(s.id) || { total: 0, present: 0, late: 0, absent: 0 };
+      const attended = att.present + att.late;
+      const rate = att.total > 0 ? Number(((attended / att.total) * 100).toFixed(1)) : 0;
+      return {
+        id: s.id,
+        name: s.name,
+        rollNumber: s.rollNumber,
+        email: s.email,
+        department: s.department,
+        semester: s.semester,
+        section: s.section,
+        status: s.status,
+        attendance: {
+          total: att.total,
+          present: att.present,
+          late: att.late,
+          absent: att.absent,
+          rate,
+        },
+      };
+    });
+
+    const sessionKeys = new Set(attendanceRecords.map((r) => `${r.date}_P${r.periodNumber}`));
+    const conductedSessions = sessionKeys.size;
+    const totalPresent = attendanceRecords.filter((r) => r.status === "Present").length;
+    const totalAbsent = attendanceRecords.filter((r) => r.status === "Absent").length;
+    const totalLate = attendanceRecords.filter((r) => r.status === "Late").length;
+    const totalAttended = totalPresent + totalLate;
+    const classAttendanceRate =
+      attendanceRecords.length > 0 ? Number(((totalAttended / attendanceRecords.length) * 100).toFixed(1)) : 0;
+
+    return res.json({
+      classInfo: {
+        branch,
+        department: branch === "ME" ? "MECHANICAL" : branch,
+        semester,
+        section,
+        academicYear: "2026-27",
+        course: {
+          id: course.id,
+          code: course.code,
+          name: course.name,
+          credits: course.credits,
+          category: course.category,
+          semester: course.semester,
+          department: course.department,
+        },
+        faculties: uniqueFaculties.length > 0 ? uniqueFaculties : [{ name: course.faculty || "Faculty Unassigned" }],
+        studentCount: students.length,
+        weeklyPeriods: timetableSlots.length,
+      },
+      timetable: timetableSlots.map((s) => ({
+        id: s.id,
+        day: s.day,
+        periodNumber: s.periodNumber,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        roomNo: s.roomNo || "Room Unassigned",
+        faculty: s.faculty ? { id: s.faculty.id, name: s.faculty.name } : { name: course.faculty || "Faculty Unassigned" },
+        isLab: s.isLab,
+      })),
+      attendanceSummary: {
+        totalStudents: students.length,
+        conductedSessions,
+        totalRecords: attendanceRecords.length,
+        presentCount: totalPresent,
+        absentCount: totalAbsent,
+        lateCount: totalLate,
+        attendanceRate: classAttendanceRate,
+      },
+      roster: studentRoster,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to fetch class details." });
+  }
+});
+
+// GET /api/anits/super-admin/classes/roster: Paginated Institutional Student Directory
+router.get("/super-admin/classes/roster", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string, 10) || 25));
+    const search = (req.query.search as string || "").trim();
+    const dept = (req.query.department as string || "").trim();
+    const semester = (req.query.semester as string || "").trim();
+    const section = (req.query.section as string || "").trim();
+
+    const where: any = { status: { not: "Inactive" } };
+    if (dept && dept !== "All" && dept !== "All Departments") {
+      const depts = getMatchingDepartments(dept);
+      where.department = { in: depts, mode: "insensitive" };
+    }
+    if (semester && semester !== "All" && semester !== "All Semesters") {
+      const semNum = parseInt(semester.replace(/[^0-9]/g, ""), 10);
+      if (!isNaN(semNum)) where.semester = semNum;
+    }
+    if (section && section !== "All" && section !== "All Sections") {
+      const cleanSec = section.replace(/^Section\s+/i, "").trim().toUpperCase();
+      where.section = { in: [cleanSec, `Section ${cleanSec}`] };
+    }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { rollNumber: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const [total, students] = await Promise.all([
+      prisma.student.count({ where }),
+      prisma.student.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          rollNumber: true,
+          email: true,
+          department: true,
+          semester: true,
+          section: true,
+          status: true,
+        },
+        orderBy: { rollNumber: "asc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+    return res.json({
+      students,
+      pagination: {
+        total,
+        page,
+        pageSize,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to fetch student roster." });
+  }
+});
+
+// GET /api/anits/super-admin/classes/export: CSV Export of Institutional Directory
+router.get("/super-admin/classes/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole !== "ANITS_ADMIN") {
+    return res.status(403).json({ error: "Access denied. ANITS Super Admin access required." });
+  }
+
+  try {
+    const [departments, allActiveCourses, timetableGroups, studentGroups, timetableSlots] = await Promise.all([
+      prisma.department.findMany({ orderBy: { code: "asc" } }),
+      prisma.course.findMany({
+        where: {
+          OR: [{ status: "Active" }, { status: "Approved" }, { isOffered: true }],
+        },
+        select: { id: true, code: true, name: true, faculty: true, department: true, semester: true },
+        orderBy: { code: "asc" },
+      }),
+      prisma.masterTimetable.groupBy({
+        by: ["branch", "semester", "section", "courseId"],
+        _count: { _all: true },
+      }),
+      prisma.student.groupBy({
+        by: ["department", "semester", "section"],
+        _count: { id: true },
+        where: { status: { not: "Inactive" } },
+      }),
+      prisma.masterTimetable.findMany({
+        where: { facultyId: { not: null }, courseId: { not: null } },
+        select: { branch: true, semester: true, section: true, courseId: true, faculty: { select: { id: true, name: true } } },
+        distinct: ["branch", "semester", "section", "courseId", "facultyId"],
+      }),
+    ]);
+
+    const courseMap = new Map(allActiveCourses.map((c) => [c.id, c]));
+
+    const facultyMap = new Map<string, { id: string; name: string }[]>();
+    for (const slot of timetableSlots) {
+      if (!slot.courseId || !slot.faculty) continue;
+      const key = `${slot.branch}_${slot.semester}_${slot.section}_${slot.courseId}`;
+      if (!facultyMap.has(key)) facultyMap.set(key, []);
+      facultyMap.get(key)!.push(slot.faculty);
+    }
+
+    const classList = timetableGroups
+      .filter((g) => g.courseId !== null)
+      .map((g) => {
+        const course = courseMap.get(g.courseId!);
+        const cKey = `${g.branch}_${g.semester}_${g.section}_${g.courseId}`;
+        const faculties = facultyMap.get(cKey) || [];
+        const facultyNames = faculties.map((f) => f.name);
+        const facultyName =
+          facultyNames.length > 0 ? facultyNames.join(", ") : course?.faculty || "Faculty Unassigned";
+
+        const studentsCount = resolveCohortStudentCount(g.branch, g.semester, g.section, studentGroups);
+        const normDept = g.branch === "ME" ? "MECHANICAL" : g.branch;
+        const deptName = resolveDepartmentName(normDept, departments);
+
+        return {
+          branch: g.branch,
+          department: normDept,
+          departmentName: deptName,
+          semester: g.semester,
+          section: g.section,
+          courseId: g.courseId!,
+          courseCode: course?.code || "N/A",
+          courseName: course?.name || "Unnamed Course",
+          academicYear: "2026-27",
+          facultyName,
+          studentsCount,
+          weeklyPeriods: g._count._all,
+          status: "Active",
+        };
+      });
+
+    let filtered = [...classList];
+
+    const deptFilter = (req.query.department as string || "").trim();
+    if (deptFilter && deptFilter !== "All" && deptFilter !== "All Departments") {
+      const matchingDepts = getMatchingDepartments(deptFilter).map((d) => d.toLowerCase());
+      filtered = filtered.filter(
+        (c) =>
+          matchingDepts.includes(c.department.toLowerCase()) ||
+          matchingDepts.includes(c.branch.toLowerCase())
+      );
+    }
+
+    const courseFilter = (req.query.courseId as string || req.query.course as string || "").trim();
+    if (courseFilter && courseFilter !== "All" && courseFilter !== "All Courses") {
+      filtered = filtered.filter(
+        (c) => c.courseId === courseFilter || c.courseCode.toLowerCase() === courseFilter.toLowerCase()
+      );
+    }
+
+    const sectionFilter = (req.query.section as string || "").trim();
+    if (sectionFilter && sectionFilter !== "All" && sectionFilter !== "All Sections") {
+      const cleanFilter = sectionFilter.replace(/^Section\s+/i, "").trim().toUpperCase();
+      filtered = filtered.filter((c) => {
+        const cSec = (c.section || "").replace(/^Section\s+/i, "").trim().toUpperCase();
+        return cSec === cleanFilter;
+      });
+    }
+
+    const semesterFilter = (req.query.semester as string || "").trim();
+    if (semesterFilter && semesterFilter !== "All" && semesterFilter !== "All Semesters") {
+      const semNum = parseInt(semesterFilter.replace(/[^0-9]/g, ""), 10);
+      if (!isNaN(semNum)) {
+        filtered = filtered.filter((c) => c.semester === semNum);
+      }
+    }
+
+    const searchQuery = (req.query.search as string || "").trim().toLowerCase();
+    if (searchQuery) {
+      filtered = filtered.filter(
+        (c) =>
+          c.courseCode.toLowerCase().includes(searchQuery) ||
+          c.courseName.toLowerCase().includes(searchQuery) ||
+          c.facultyName.toLowerCase().includes(searchQuery) ||
+          c.department.toLowerCase().includes(searchQuery) ||
+          c.section.toLowerCase().includes(searchQuery)
+      );
+    }
+
+    const rows = [
+      ["Department", "Course Code", "Course Title", "Section", "Semester", "Academic Year", "Faculty", "Students Count", "Weekly Periods", "Status"],
+    ];
+
+    for (const c of filtered) {
+      rows.push([
+        `"${c.department}"`,
+        `"${c.courseCode}"`,
+        `"${c.courseName.replace(/"/g, '""')}"`,
+        `"${c.section}"`,
+        `"Semester ${c.semester}"`,
+        `"${c.academicYear}"`,
+        `"${c.facultyName.replace(/"/g, '""')}"`,
+        `"${c.studentsCount}"`,
+        `"${c.weeklyPeriods}"`,
+        `"${c.status}"`,
+      ]);
+    }
+
+    const csvContent = rows.map((r) => r.join(",")).join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="anits_classes_student_cohorts.csv"');
+    return res.status(200).send(csvContent);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to export classes." });
+  }
+});
+
 export default router;
