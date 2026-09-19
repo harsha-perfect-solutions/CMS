@@ -8,6 +8,7 @@ interface TimetableHeaderProps {
   semester: string | number;
   faculty?: FacultyProfileHeader | null;
   onRefresh: () => void;
+  isRefreshing?: boolean;
   onDownloadPdf?: () => void;
 }
 
@@ -18,11 +19,12 @@ export function TimetableHeader({
   onRefresh,
   onDownloadPdf,
 }: TimetableHeaderProps) {
-  const currentDate = new Date().toLocaleDateString("en-US", {
+  const currentDate = new Date().toLocaleDateString("en-IN", {
     weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "Asia/Kolkata",
   });
 
   const handlePrint = () => {

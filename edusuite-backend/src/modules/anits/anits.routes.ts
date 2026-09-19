@@ -886,10 +886,16 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
     }
 
     if (anitsRole === "FACULTY") {
+      const latestTimetable = await prisma.masterTimetable.findFirst({
+        select: { academicYear: true },
+        orderBy: { updatedAt: "desc" },
+      });
+      const academicYear = latestTimetable?.academicYear || "2026-27";
+
       const [faculty, assignedSlots, conductedToday] = await Promise.all([
         prisma.faculty.findUnique({ where: { id: authUserId } }),
         prisma.masterTimetable.findMany({
-          where: { facultyId: authUserId },
+          where: { facultyId: authUserId, academicYear },
           include: { course: true },
           orderBy: [{ day: "asc" }, { periodNumber: "asc" }],
         }),
@@ -900,41 +906,160 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
         }),
       ]);
 
+      if (!faculty) {
+        return res.status(404).json({ error: "Authenticated faculty profile not found." });
+      }
+
       const conductedIds = new Set(conductedToday.map((r) => r.timetableId));
       const todayAssigned = assignedSlots.filter((s) => s.day.toLowerCase() === dayName.toLowerCase());
-      const pendingCount = todayAssigned.filter((s) => !conductedIds.has(s.id)).length;
-      const completedCount = todayAssigned.length - pendingCount;
+
+      // Parse current time in Asia/Kolkata
+      const [curHour, curMin] = new Intl.DateTimeFormat("en-GB", {
+        hour: "numeric",
+        minute: "numeric",
+        hour12: false,
+        timeZone: "Asia/Kolkata",
+      }).format(now).split(":").map(Number);
+      const curMins = curHour * 60 + (curMin || 0);
+
+      // Workload and time calculations
+      let totalWeeklyMins = 0;
+      for (const s of assignedSlots) {
+        if (s.startTime && s.endTime) {
+          const [sh, sm] = s.startTime.split(":").map(Number);
+          const [eh, em] = s.endTime.split(":").map(Number);
+          if (!isNaN(sh) && !isNaN(eh)) {
+            const mins = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+            totalWeeklyMins += mins > 0 ? mins : 50;
+          } else {
+            totalWeeklyMins += 50;
+          }
+        } else {
+          totalWeeklyMins += 50;
+        }
+      }
+      const weeklyHours = Number((totalWeeklyMins / 60).toFixed(1));
+      const theoryPeriods = assignedSlots.filter((s) => !s.isLab).length;
+      const labPeriods = assignedSlots.filter((s) => s.isLab).length;
+      const totalSubjects = new Set(assignedSlots.map((s) => s.courseId || s.course?.code).filter(Boolean)).size;
+      const totalSections = new Set(assignedSlots.map((s) => `${s.branch}-${s.semester}-${s.section}`)).size;
+
+      // Calculate total students across taught cohorts
+      const cohortMap = new Map<string, { branch: string; semester: number; section: string }>();
+      for (const s of assignedSlots) {
+        const cleanSec = (s.section || "A").replace(/^Section\s+/i, "").trim();
+        const k = `${s.branch}_${s.semester}_${cleanSec}`.toUpperCase();
+        if (!cohortMap.has(k)) {
+          cohortMap.set(k, { branch: s.branch, semester: s.semester, section: cleanSec });
+        }
+      }
+      const cohortList = Array.from(cohortMap.values());
+      let totalStudents = 0;
+      if (cohortList.length > 0) {
+        totalStudents = await prisma.student.count({
+          where: {
+            status: "Active",
+            OR: cohortList.map((c) => ({
+              department: { equals: c.branch, mode: "insensitive" },
+              semester: c.semester,
+              section: { contains: c.section, mode: "insensitive" },
+            })),
+          },
+        });
+      }
+
+      // Map today's classes with real-time class status & attendance status
+      let firstPendingSlotId: string | null = null;
+      let pendingCount = 0;
+      let completedCount = 0;
+
+      const processedTodayClasses = todayAssigned.map((s) => {
+        let startMins = 9 * 60;
+        let endMins = 10 * 60;
+        if (s.startTime && s.endTime) {
+          const [sh, sm] = s.startTime.split(":").map(Number);
+          const [eh, em] = s.endTime.split(":").map(Number);
+          if (!isNaN(sh) && !isNaN(eh)) {
+            startMins = sh * 60 + (sm || 0);
+            endMins = eh * 60 + (em || 0);
+          }
+        }
+
+        const isSubmitted = conductedIds.has(s.id);
+        const shouldHaveOccurred = curMins >= startMins;
+        const isOngoing = curMins >= startMins && curMins <= endMins;
+        const hasEnded = curMins > endMins;
+
+        let classStatus: "UPCOMING" | "ONGOING" | "COMPLETED" | "ATTENDANCE PENDING" = "UPCOMING";
+        if (isSubmitted) {
+          classStatus = "COMPLETED";
+          completedCount++;
+        } else if (isOngoing) {
+          classStatus = "ONGOING";
+          pendingCount++;
+          if (!firstPendingSlotId) firstPendingSlotId = s.id;
+        } else if (hasEnded) {
+          classStatus = "ATTENDANCE PENDING";
+          pendingCount++;
+          if (!firstPendingSlotId) firstPendingSlotId = s.id;
+        } else {
+          classStatus = "UPCOMING";
+          if (!firstPendingSlotId) firstPendingSlotId = s.id;
+        }
+
+        const attendanceStatus = isSubmitted
+          ? "Attendance Submitted"
+          : shouldHaveOccurred
+          ? "Attendance Pending"
+          : "Upcoming";
+
+        return {
+          id: s.id,
+          periodNumber: s.periodNumber,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          time: `${s.startTime} - ${s.endTime}`,
+          subjectCode: s.course?.code || "",
+          subjectName: s.course?.name || "Assigned Lecture",
+          branch: s.branch,
+          department: s.branch,
+          semester: s.semester,
+          section: s.section,
+          roomNo: s.roomNo || "Room 101",
+          isLab: s.isLab,
+          classStatus,
+          attendanceStatus,
+        };
+      });
 
       return res.json({
         anitsRole,
         faculty: {
-          id: faculty?.id,
-          name: faculty?.name,
-          rollNumber: faculty?.rollNumber,
-          department: faculty?.department,
+          id: faculty.id,
+          name: faculty.name,
+          rollNumber: faculty.rollNumber,
+          department: faculty.department,
+          designation: faculty.role || "Faculty",
+          email: faculty.email,
         },
-        academicYear: "2026-27",
+        academicYear,
         date: today,
         day: dayName,
+        firstPendingSlotId,
         metrics: {
           totalAssignedWeekly: assignedSlots.length,
           todayClassesCount: todayAssigned.length,
           attendancePendingCount: pendingCount,
           classesCompletedToday: completedCount,
+          weeklyPeriods: assignedSlots.length,
+          weeklyHours,
+          theoryPeriods,
+          labPeriods,
+          totalSubjects,
+          totalSections,
+          totalStudents,
         },
-        todayClasses: todayAssigned.map((s) => ({
-          id: s.id,
-          periodNumber: s.periodNumber,
-          time: `${s.startTime} - ${s.endTime}`,
-          subjectCode: s.course?.code || "",
-          subjectName: s.course?.name || "Assigned Lecture",
-          branch: s.branch,
-          semester: s.semester,
-          section: s.section,
-          roomNo: s.roomNo || "Room 101",
-          isLab: s.isLab,
-          attendanceStatus: conductedIds.has(s.id) ? "Attendance Submitted" : "Pending Attendance",
-        })),
+        todayClasses: processedTodayClasses,
       });
     }
 
@@ -3157,47 +3282,70 @@ router.delete("/super-admin/students/:id", authenticateToken, async (req: Authen
 // SECTION 6: ANITS REPORTS & ANALYTICS CENTER (HOD & SUPER ADMIN)
 // =========================================================================
 
-async function isHodOrAdmin(req: AuthenticatedRequest): Promise<boolean> {
+interface ReportsAuthContext {
+  isSuperAdmin: boolean;
+  isHod: boolean;
+  isFaculty: boolean;
+  deptScope?: string;
+  facultyScope?: string;
+}
+
+async function resolveReportsContext(req: AuthenticatedRequest): Promise<ReportsAuthContext | null> {
+  const authUserId = req.userId;
+  if (!authUserId) return null;
+
   const anitsRole = resolveAnitsRole(req.userRole || "");
-  if (anitsRole === "HOD" || anitsRole === "ANITS_ADMIN") return true;
-  if (req.userId) {
-    const fac = await prisma.faculty.findUnique({
-      where: { id: req.userId },
-      select: { role: true },
-    });
-    if (fac?.role?.toLowerCase() === "hod") return true;
+
+  if (anitsRole === "ANITS_ADMIN") {
+    const deptScope = req.query.department ? String(req.query.department).trim() : undefined;
+    return { isSuperAdmin: true, isHod: false, isFaculty: false, deptScope };
   }
-  return false;
+
+  let fac: { id: string; role: string | null; department: string | null } | null = null;
+  if (anitsRole === "FACULTY" || anitsRole === "HOD") {
+    fac = await prisma.faculty.findUnique({
+      where: { id: authUserId },
+      select: { id: true, role: true, department: true },
+    });
+  }
+
+  const isHodRole = anitsRole === "HOD" || fac?.role?.toLowerCase() === "hod";
+  if (isHodRole) {
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      authUserId,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    return { isSuperAdmin: false, isHod: true, isFaculty: false, deptScope: ctx.deptCode };
+  }
+
+  if (anitsRole === "FACULTY" || fac) {
+    return {
+      isSuperAdmin: false,
+      isHod: false,
+      isFaculty: true,
+      deptScope: fac?.department || undefined,
+      facultyScope: authUserId,
+    };
+  }
+
+  return null;
 }
 
 // GET /api/anits/reports/overview & /api/anits/super-admin/reports/overview
 router.get(["/reports/overview", "/super-admin/reports/overview"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!(await isHodOrAdmin(req))) {
+    const ctx = await resolveReportsContext(req);
+    if (!ctx) {
       return res.status(403).json({
         success: false,
-        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+        error: { code: "FORBIDDEN", message: "Access denied. Faculty, HOD, or Super Admin authorization required." },
       });
     }
 
-    const anitsRole = resolveAnitsRole(req.userRole || "");
-    const isSuperAdmin = anitsRole === "ANITS_ADMIN";
-
-    let deptScope: string | undefined = undefined;
-    if (isSuperAdmin) {
-      deptScope = req.query.department ? String(req.query.department).trim() : undefined;
-    } else {
-      const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
-      const ctx = await AnitsHodService.resolveHodContext(
-        req.userId!,
-        req.userRole!,
-        req.userDepartment,
-        requestedDept
-      );
-      deptScope = ctx.deptCode;
-    }
-
-    const overview = await AnitsReportsService.getOverview(deptScope);
+    const overview = await AnitsReportsService.getOverview(ctx.deptScope, ctx.facultyScope);
     return res.json(overview);
   } catch (error: any) {
     console.error("GET reports/overview error:", error);
@@ -3211,29 +3359,12 @@ router.get(["/reports/overview", "/super-admin/reports/overview"], authenticateT
 // GET /api/anits/reports/data & /api/anits/super-admin/reports/data
 router.get(["/reports/data", "/super-admin/reports/data"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!(await isHodOrAdmin(req))) {
+    const ctx = await resolveReportsContext(req);
+    if (!ctx) {
       return res.status(403).json({
         success: false,
-        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+        error: { code: "FORBIDDEN", message: "Access denied. Faculty, HOD, or Super Admin authorization required." },
       });
-    }
-
-    const anitsRole = resolveAnitsRole(req.userRole || "");
-    const isSuperAdmin = anitsRole === "ANITS_ADMIN";
-
-    let deptScope: string | undefined = undefined;
-    if (isSuperAdmin) {
-      deptScope = req.query.department ? String(req.query.department).trim() : undefined;
-    } else {
-      const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
-      const ctx = await AnitsHodService.resolveHodContext(
-        req.userId!,
-        req.userRole!,
-        req.userDepartment,
-        requestedDept
-      );
-      // HOD scope is strictly enforced to their authenticated department
-      deptScope = ctx.deptCode;
     }
 
     const category = String(req.query.category || "attendance");
@@ -3242,7 +3373,8 @@ router.get(["/reports/data", "/super-admin/reports/data"], authenticateToken, as
     const limit = Math.max(1, parseInt(String(req.query.limit || "25"), 10));
 
     const filters = {
-      department: deptScope,
+      department: ctx.deptScope,
+      facultyId: ctx.facultyScope,
       semester: req.query.semester ? String(req.query.semester).trim() : undefined,
       section: req.query.section ? String(req.query.section).trim() : undefined,
       academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
@@ -3271,28 +3403,12 @@ for (const cat of shorthandCategories) {
   router.get([`/reports/${cat}`, `/super-admin/reports/${cat}`], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
     req.query.category = cat;
     try {
-      if (!(await isHodOrAdmin(req))) {
+      const ctx = await resolveReportsContext(req);
+      if (!ctx) {
         return res.status(403).json({
           success: false,
-          error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+          error: { code: "FORBIDDEN", message: "Access denied. Faculty, HOD, or Super Admin authorization required." },
         });
-      }
-
-      const anitsRole = resolveAnitsRole(req.userRole || "");
-      const isSuperAdmin = anitsRole === "ANITS_ADMIN";
-
-      let deptScope: string | undefined = undefined;
-      if (isSuperAdmin) {
-        deptScope = req.query.department ? String(req.query.department).trim() : undefined;
-      } else {
-        const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
-        const ctx = await AnitsHodService.resolveHodContext(
-          req.userId!,
-          req.userRole!,
-          req.userDepartment,
-          requestedDept
-        );
-        deptScope = ctx.deptCode;
       }
 
       const reportType = String(req.query.reportType || (cat === "timetable" ? "master" : cat === "students" ? "roster" : cat === "faculty" ? "directory" : "summary"));
@@ -3300,7 +3416,8 @@ for (const cat of shorthandCategories) {
       const limit = Math.max(1, parseInt(String(req.query.limit || "25"), 10));
 
       const filters = {
-        department: deptScope,
+        department: ctx.deptScope,
+        facultyId: ctx.facultyScope,
         semester: req.query.semester ? String(req.query.semester).trim() : undefined,
         section: req.query.section ? String(req.query.section).trim() : undefined,
         academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
@@ -3325,35 +3442,20 @@ for (const cat of shorthandCategories) {
 // GET /api/anits/reports/export & /api/anits/super-admin/reports/export: Filter-Aware CSV Stream
 router.get(["/reports/export", "/super-admin/reports/export"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!(await isHodOrAdmin(req))) {
+    const ctx = await resolveReportsContext(req);
+    if (!ctx) {
       return res.status(403).json({
         success: false,
-        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+        error: { code: "FORBIDDEN", message: "Access denied. Faculty, HOD, or Super Admin authorization required." },
       });
-    }
-
-    const anitsRole = resolveAnitsRole(req.userRole || "");
-    const isSuperAdmin = anitsRole === "ANITS_ADMIN";
-
-    let deptScope: string | undefined = undefined;
-    if (isSuperAdmin) {
-      deptScope = req.query.department ? String(req.query.department).trim() : undefined;
-    } else {
-      const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
-      const ctx = await AnitsHodService.resolveHodContext(
-        req.userId!,
-        req.userRole!,
-        req.userDepartment,
-        requestedDept
-      );
-      deptScope = ctx.deptCode;
     }
 
     const category = String(req.query.category || "attendance");
     const reportType = String(req.query.reportType || "summary");
 
     const filters = {
-      department: deptScope,
+      department: ctx.deptScope,
+      facultyId: ctx.facultyScope,
       semester: req.query.semester ? String(req.query.semester).trim() : undefined,
       section: req.query.section ? String(req.query.section).trim() : undefined,
       academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
@@ -3368,11 +3470,11 @@ router.get(["/reports/export", "/super-admin/reports/export"], authenticateToken
     await prisma.auditLog.create({
       data: {
         actorId: req.userId,
-        actorName: req.userEmail || (isSuperAdmin ? "Super Admin" : "Department HOD"),
-        actorRole: req.userRole || (isSuperAdmin ? "super_admin" : "hod"),
+        actorName: req.userEmail || (ctx.isSuperAdmin ? "Super Admin" : ctx.isHod ? "Department HOD" : "Faculty Member"),
+        actorRole: req.userRole || (ctx.isSuperAdmin ? "super_admin" : ctx.isHod ? "hod" : "faculty"),
         action: "REPORT_EXPORTED",
         module: "Reports",
-        targetEntity: `${category}:${reportType}${deptScope ? `:${deptScope}` : ""}`,
+        targetEntity: `${category}:${reportType}${ctx.deptScope ? `:${ctx.deptScope}` : ""}`,
         status: "Success",
       },
     });
@@ -3392,42 +3494,26 @@ router.get(["/reports/export", "/super-admin/reports/export"], authenticateToken
 // GET /api/anits/reports/department-summary/export: Dedicated One-Click Export
 router.get(["/reports/department-summary/export", "/super-admin/reports/department-summary/export"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!(await isHodOrAdmin(req))) {
+    const ctx = await resolveReportsContext(req);
+    if (!ctx || ctx.isFaculty) {
       return res.status(403).json({
         success: false,
-        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required." },
+        error: { code: "FORBIDDEN", message: "Access denied. HOD or Super Admin authorization required for institutional summary." },
       });
     }
 
-    const anitsRole = resolveAnitsRole(req.userRole || "");
-    const isSuperAdmin = anitsRole === "ANITS_ADMIN";
-
-    let deptScope: string | undefined = undefined;
-    if (isSuperAdmin) {
-      deptScope = req.query.department ? String(req.query.department).trim() : undefined;
-    } else {
-      const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
-      const ctx = await AnitsHodService.resolveHodContext(
-        req.userId!,
-        req.userRole!,
-        req.userDepartment,
-        requestedDept
-      );
-      deptScope = ctx.deptCode;
-    }
-
     const { filename, csvContent } = await AnitsReportsService.generateCSV("departments", "summary", {
-      department: deptScope,
+      department: ctx.deptScope,
     });
 
     await prisma.auditLog.create({
       data: {
         actorId: req.userId,
-        actorName: req.userEmail || (isSuperAdmin ? "Super Admin" : "Department HOD"),
-        actorRole: req.userRole || (isSuperAdmin ? "super_admin" : "hod"),
+        actorName: req.userEmail || (ctx.isSuperAdmin ? "Super Admin" : "Department HOD"),
+        actorRole: req.userRole || (ctx.isSuperAdmin ? "super_admin" : "hod"),
         action: "REPORT_EXPORTED",
         module: "Reports",
-        targetEntity: `departments:summary${deptScope ? `:${deptScope}` : ""}`,
+        targetEntity: `departments:summary${ctx.deptScope ? `:${ctx.deptScope}` : ""}`,
         status: "Success",
       },
     });
@@ -3447,6 +3533,25 @@ router.get(["/reports/department-summary/export", "/super-admin/reports/departme
 // =========================================================================
 // HOD PORTAL DEDICATED DEPARTMENT-SCOPED ENDPOINTS
 // =========================================================================
+
+/**
+ * Returns true if the authenticated user is a HOD or Super Admin.
+ * Used as a gate for all /hod/* endpoints.
+ */
+async function isHodOrAdmin(req: AuthenticatedRequest): Promise<boolean> {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole === "ANITS_ADMIN") return true;
+  if (anitsRole === "HOD") return true;
+  // Check DB role in case JWT role is just "faculty" but DB shows hod
+  if (req.userId) {
+    const fac = await prisma.faculty.findUnique({
+      where: { id: req.userId },
+      select: { role: true },
+    });
+    if (fac?.role?.toLowerCase() === "hod") return true;
+  }
+  return false;
+}
 
 // GET /api/anits/hod/dashboard: Dynamic department dashboard
 router.get("/hod/dashboard", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {

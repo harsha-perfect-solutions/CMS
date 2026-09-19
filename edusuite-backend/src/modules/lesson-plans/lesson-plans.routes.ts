@@ -22,7 +22,8 @@ async function resolveAuthFaculty(req: AuthenticatedRequest) {
 
   if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
     faculty = await prisma.faculty.findFirst({
-      where: { email: "faculty@cms.com" },
+      where: { status: "Active" },
+      orderBy: { name: "asc" },
       include: {
         subjectAllocations: { include: { course: true } },
         timetables: { include: { course: true } },

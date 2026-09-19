@@ -14,7 +14,7 @@ export interface FacultyProfileHeader {
   id: string;
   name: string;
   rollNumber: string;
-  department: string;
+  department: string | null;
   designation: string;
   email: string;
   role: string;
@@ -45,9 +45,11 @@ export interface TimetableSlotItem {
 export interface FacultyTimetableResponse {
   faculty: FacultyProfileHeader | null;
   academicYear: string;
-  activeSemester: number;
+  /** null when faculty has no timetable assignments for the year */
+  activeSemester: number | null;
   availableSemesters: number[];
-  academicWeek: string;
+  /** null when no ?week= param was supplied */
+  academicWeek: string | null;
   currentDate: string;
   todaySchedule: TimetableSlotItem[];
   teachingLoad: TeachingLoad;

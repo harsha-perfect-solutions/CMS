@@ -1189,6 +1189,10 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       return res.status(401).json({ error: "Unauthorized. Authentication session required." });
     }
 
+    if (authRole === "student" || authRole === "parent") {
+      return res.status(403).json({ error: "Access denied. Students and parents cannot access faculty attendance management." });
+    }
+
     // 1. Resolve Faculty identity strictly from authenticated JWT session
     let faculty = await prisma.faculty.findUnique({
       where: { id: authUserId },
@@ -1197,7 +1201,8 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
 
     if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
       faculty = await prisma.faculty.findFirst({
-        where: { email: "faculty@cms.com" },
+        where: { status: "Active" },
+        orderBy: { name: "asc" },
         select: { id: true, rollNumber: true, name: true, email: true, department: true },
       });
     }
@@ -1206,13 +1211,38 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       return res.status(403).json({ error: "Access denied. Faculty profile not found." });
     }
 
-    // Determine target date and day of week
-    const targetDateStr = (req.query.date as string) || new Date().toISOString().split("T")[0];
-    const targetDateObj = new Date(targetDateStr);
-    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const targetDay = dayNames[targetDateObj.getDay()] || "Friday";
+    // Determine target date and day in IST (Asia/Kolkata, UTC+5:30)
+    let targetDateStr = req.query.date as string;
+    let targetDay = "";
+    let formattedDate = "";
 
-    // Query faculty timetable sessions for that day and academic year
+    if (targetDateStr) {
+      const parts = targetDateStr.split("-").map(Number);
+      if (parts.length === 3) {
+        const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+        targetDay = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", weekday: "long" }).format(d);
+        formattedDate = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", weekday: "long", month: "short", day: "numeric", year: "numeric" }).format(d);
+      }
+    } else {
+      const now = new Date();
+      targetDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+      targetDay = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", weekday: "long" }).format(now);
+      formattedDate = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", weekday: "long", month: "short", day: "numeric", year: "numeric" }).format(now);
+    }
+
+    // Query all timetable records for this faculty to resolve active academic year & semesters
+    const allFacultyTimetables = await prisma.masterTimetable.findMany({
+      where: { facultyId: faculty.id },
+      select: { id: true, academicYear: true, semester: true },
+    });
+    const allTTIds = allFacultyTimetables.map((t) => t.id);
+    const activeAcademicYear = allFacultyTimetables[0]?.academicYear || "2026-27";
+    const distinctSemesters = Array.from(new Set(allFacultyTimetables.map((t) => t.semester))).sort((a, b) => a - b);
+    const semesterLabel = distinctSemesters.length > 0
+      ? distinctSemesters.map((s) => `Semester ${s}`).join(", ")
+      : "Semester 5";
+
+    // Query faculty timetable sessions for targetDay
     const timetableSlots = await prisma.masterTimetable.findMany({
       where: {
         facultyId: faculty.id,
@@ -1238,18 +1268,18 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       if (!recordsByTimetable.has(r.timetableId)) {
         recordsByTimetable.set(r.timetableId, { present: 0, absent: 0, late: 0, total: 0 });
       }
-      const stats = recordsByTimetable.get(r.timetableId)!;
-      stats.total += 1;
-      if (r.status === "Present") stats.present += 1;
-      else if (r.status === "Absent") stats.absent += 1;
-      else if (r.status === "Late") stats.late += 1;
+      const s = recordsByTimetable.get(r.timetableId)!;
+      s.total += 1;
+      if (r.status === "Present") s.present += 1;
+      else if (r.status === "Absent") s.absent += 1;
+      else if (r.status === "Late") s.late += 1;
     }
 
     const classes = timetableSlots.map((slot) => {
       const cleanSec = (slot.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
       const classCode = `${slot.branch}-${slot.semester}${cleanSec}`;
-      const stats = recordsByTimetable.get(slot.id);
-      const isSubmitted = Boolean(stats && stats.total > 0);
+      const statsForSlot = recordsByTimetable.get(slot.id);
+      const isSubmitted = Boolean(statsForSlot && statsForSlot.total > 0);
       const status = isSubmitted ? "ATTENDANCE SUBMITTED" : "UPCOMING";
 
       return {
@@ -1271,28 +1301,22 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
         room: slot.roomNo || "Room 101",
         isLab: slot.isLab,
         classType: slot.isLab ? "Lab" : "Theory",
-        academicYear: slot.academicYear || "2026-27",
+        academicYear: slot.academicYear || activeAcademicYear,
         facultyName: slot.faculty?.name || faculty?.name || "Faculty",
         status,
         attendanceSubmitted: isSubmitted,
         attendanceMarked: isSubmitted,
-        submittedStats: stats ? {
-          present: stats.present,
-          absent: stats.absent,
-          late: stats.late,
-          total: stats.total,
+        submittedStats: statsForSlot ? {
+          present: statsForSlot.present,
+          absent: statsForSlot.absent,
+          late: statsForSlot.late,
+          total: statsForSlot.total,
         } : null,
       };
     });
 
     // Compute top summary metrics strictly from real PostgreSQL data
-    const allFacultyTimetables = await prisma.masterTimetable.findMany({
-      where: { facultyId: faculty.id },
-      select: { id: true },
-    });
-    const allTTIds = allFacultyTimetables.map((t) => t.id);
-
-    const [totalConductedAgg, todayPresentCount, todayAbsentCount, pendingLeavesCount] = await Promise.all([
+    const [totalConductedAgg, todayPresentCount, todayAbsentCount, todayLateCount, pendingLeavesCount] = await Promise.all([
       prisma.attendanceRecord.groupBy({
         by: ["timetableId", "date", "periodNumber"],
         where: { timetableId: { in: allTTIds } },
@@ -1309,6 +1333,13 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
           timetableId: { in: allTTIds },
           date: targetDateStr,
           status: "Absent",
+        },
+      }),
+      prisma.attendanceRecord.count({
+        where: {
+          timetableId: { in: allTTIds },
+          date: targetDateStr,
+          status: "Late",
         },
       }),
       prisma.facultyLeave.count({
@@ -1336,6 +1367,7 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       pending: pendingToday,
       presentToday: todayPresentCount,
       absentToday: todayAbsentCount,
+      lateToday: todayLateCount,
       average: averageAttendance,
       leavesPending: pendingLeavesCount,
     };
@@ -1348,11 +1380,14 @@ router.get("/faculty/today", authenticateToken, async (req: AuthenticatedRequest
       },
       targetDate: targetDateStr,
       targetDay,
+      formattedDate,
       departmentName: faculty.department || "N/A",
-      academicYear: "2026-27",
-      semester: classes.length > 0 ? `Sem ${classes[0].semester}` : "Semester 5",
+      academicYear: activeAcademicYear,
+      semester: semesterLabel,
+      semesters: distinctSemesters,
       stats,
       classes,
+      todayClasses: classes,
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
@@ -1653,7 +1688,8 @@ router.get("/faculty/register", authenticateToken, async (req: AuthenticatedRequ
 
     if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
       faculty = await prisma.faculty.findFirst({
-        where: { email: "faculty@cms.com" },
+        where: { status: "Active" },
+        orderBy: { name: "asc" },
         select: { id: true, name: true, department: true },
       });
     }
@@ -1702,7 +1738,10 @@ router.get("/faculty/register", authenticateToken, async (req: AuthenticatedRequ
     });
 
     const studentIds = students.map((s) => s.id);
-    const whereRecords: any = { userId: { in: studentIds } };
+    const whereRecords: any = {
+      userId: { in: studentIds },
+      timetableId: { in: timetables.map((t) => t.id) },
+    };
     if (dateFilter) {
       whereRecords.date = dateFilter;
     }
@@ -1754,6 +1793,10 @@ router.get("/faculty/history", authenticateToken, async (req: AuthenticatedReque
       return res.status(401).json({ error: "Unauthorized." });
     }
 
+    if (authRole === "student" || authRole === "parent") {
+      return res.status(403).json({ error: "Access denied. Students and parents are not permitted." });
+    }
+
     let faculty = await prisma.faculty.findUnique({
       where: { id: authUserId },
       select: { id: true, name: true, department: true },
@@ -1761,7 +1804,8 @@ router.get("/faculty/history", authenticateToken, async (req: AuthenticatedReque
 
     if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
       faculty = await prisma.faculty.findFirst({
-        where: { email: "faculty@cms.com" },
+        where: { status: "Active" },
+        orderBy: { name: "asc" },
         select: { id: true, name: true, department: true },
       });
     }
@@ -1772,7 +1816,7 @@ router.get("/faculty/history", authenticateToken, async (req: AuthenticatedReque
 
     const facultyTimetables = await prisma.masterTimetable.findMany({
       where: { facultyId: faculty.id },
-      select: { id: true },
+      include: { course: true },
     });
     const ttIds = facultyTimetables.map((t) => t.id);
 
@@ -1801,12 +1845,16 @@ router.get("/faculty/history", authenticateToken, async (req: AuthenticatedReque
       subjectCode: string;
       subjectName: string;
       section: string;
+      semester: number;
+      academicYear: string;
+      courseId: string;
       time: string;
       room: string;
       present: number;
       absent: number;
       late: number;
       total: number;
+      attendanceRate: number;
       submittedTime: string;
     }>();
 
@@ -1830,12 +1878,16 @@ router.get("/faculty/history", authenticateToken, async (req: AuthenticatedReque
           subjectCode: cCode,
           subjectName: cName,
           section: r.timetable?.branch ? `${r.timetable.branch} Sec ${cleanSec}` : cleanSec,
+          semester: r.timetable?.semester || 5,
+          academicYear: r.timetable?.academicYear || "2026-27",
+          courseId: r.timetable?.courseId || r.courseId || "",
           time: r.timetable?.startTime ? `${r.timetable.startTime} - ${r.timetable.endTime}` : "Scheduled",
           room: r.timetable?.roomNo || "Room 101",
           present: 0,
           absent: 0,
           late: 0,
           total: 0,
+          attendanceRate: 0,
           submittedTime: new Date(r.updatedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
         });
       }
@@ -1847,12 +1899,81 @@ router.get("/faculty/history", authenticateToken, async (req: AuthenticatedReque
       else if (r.status === "Late") item.late += 1;
     }
 
-    const history = Array.from(sessionMap.values()).sort((a, b) => {
+    // Compute attendance rate for each session
+    for (const item of sessionMap.values()) {
+      item.attendanceRate = item.total > 0 ? Math.round(((item.present + item.late) / item.total) * 100) : 0;
+    }
+
+    let allSessions = Array.from(sessionMap.values()).sort((a, b) => {
       if (a.date !== b.date) return b.date.localeCompare(a.date);
       return b.periodNumber - a.periodNumber;
     });
 
-    return res.json(history);
+    // Apply query filters
+    const { semester, section, course, dateFrom, dateTo, status, search } = req.query;
+
+    if (semester && semester !== "All") {
+      const semNum = Number(semester);
+      if (!isNaN(semNum)) {
+        allSessions = allSessions.filter((s) => s.semester === semNum);
+      }
+    }
+    if (section && section !== "All") {
+      const clean = String(section).replace(/^Section\s+/i, "").trim().toUpperCase();
+      allSessions = allSessions.filter((s) => s.section.toUpperCase().includes(clean));
+    }
+    if (course && course !== "All") {
+      const cStr = String(course).toLowerCase();
+      allSessions = allSessions.filter((s) =>
+        s.subjectCode.toLowerCase().includes(cStr) ||
+        s.subjectName.toLowerCase().includes(cStr) ||
+        (s.courseId && s.courseId.toLowerCase() === cStr)
+      );
+    }
+    if (dateFrom) {
+      allSessions = allSessions.filter((s) => s.date >= String(dateFrom));
+    }
+    if (dateTo) {
+      allSessions = allSessions.filter((s) => s.date <= String(dateTo));
+    }
+    if (status && status !== "All") {
+      const st = String(status).toLowerCase();
+      if (st === "submitted") {
+        allSessions = allSessions.filter((s) => s.total > 0);
+      } else if (st === "pending") {
+        allSessions = allSessions.filter((s) => s.total === 0);
+      } else if (st === "shortage") {
+        allSessions = allSessions.filter((s) => s.attendanceRate < 75);
+      } else if (st === "good") {
+        allSessions = allSessions.filter((s) => s.attendanceRate >= 75);
+      }
+    }
+    if (search && String(search).trim()) {
+      const q = String(search).toLowerCase().trim();
+      allSessions = allSessions.filter((s) =>
+        s.subject.toLowerCase().includes(q) ||
+        s.section.toLowerCase().includes(q) ||
+        s.date.includes(q) ||
+        (s.room && s.room.toLowerCase().includes(q))
+      );
+    }
+
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const pageSize = Math.max(1, parseInt(req.query.pageSize as string) || 25);
+    const total = allSessions.length;
+    const totalPages = Math.ceil(total / pageSize) || 1;
+    const paginatedSessions = allSessions.slice((page - 1) * pageSize, page * pageSize);
+
+    return res.json({
+      history: paginatedSessions,
+      data: paginatedSessions,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages,
+      },
+    });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }
@@ -1870,6 +1991,10 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
       return res.status(401).json({ error: "Unauthorized." });
     }
 
+    if (authRole === "student" || authRole === "parent") {
+      return res.status(403).json({ error: "Access denied. Students and parents are not permitted." });
+    }
+
     let faculty = await prisma.faculty.findUnique({
       where: { id: authUserId },
       select: { id: true, name: true, department: true },
@@ -1877,7 +2002,8 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
 
     if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
       faculty = await prisma.faculty.findFirst({
-        where: { email: "faculty@cms.com" },
+        where: { status: "Active" },
+        orderBy: { name: "asc" },
         select: { id: true, name: true, department: true },
       });
     }
@@ -1915,6 +2041,7 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
         distributionData: [],
         trendData: [],
         subjectWise: [],
+        courseWise: [],
         sectionWise: [],
         lowAttendanceStudents: [],
         repeatedAbsences: [],
@@ -1974,6 +2101,76 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
       percentage: Math.round((s.attended / s.total) * 100),
     }));
 
+    // Course-wise and section-wise analytics (Requirement 23)
+    const courseSectionMap = new Map<string, {
+      courseCode: string;
+      courseName: string;
+      section: string;
+      semester: number;
+      branch: string;
+      conductedSessions: number;
+      totalRecords: number;
+      present: number;
+      absent: number;
+      late: number;
+      pendingSessions: number;
+    }>();
+
+    for (const tt of timetables) {
+      const cleanSec = (tt.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+      const code = tt.course?.code || "SUB";
+      const name = tt.course?.name || "Subject";
+      const key = `${code}_${cleanSec}_${tt.semester}`;
+
+      if (!courseSectionMap.has(key)) {
+        courseSectionMap.set(key, {
+          courseCode: code,
+          courseName: name,
+          section: `${tt.branch} Sec ${cleanSec}`,
+          semester: tt.semester,
+          branch: tt.branch,
+          conductedSessions: 0,
+          totalRecords: 0,
+          present: 0,
+          absent: 0,
+          late: 0,
+          pendingSessions: 0,
+        });
+      }
+    }
+
+    const sessionTracker = new Set<string>();
+    for (const r of records) {
+      const tt = r.timetable;
+      if (!tt) continue;
+      const cleanSec = (tt.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+      const code = tt.course?.code || r.course?.code || "SUB";
+      const key = `${code}_${cleanSec}_${tt.semester}`;
+
+      if (courseSectionMap.has(key)) {
+        const cs = courseSectionMap.get(key)!;
+        cs.totalRecords += 1;
+        if (r.status === "Present") cs.present += 1;
+        else if (r.status === "Absent") cs.absent += 1;
+        else if (r.status === "Late") cs.late += 1;
+
+        const sessionKey = `${tt.id}_${r.date}_${r.periodNumber}`;
+        if (!sessionTracker.has(sessionKey)) {
+          sessionTracker.add(sessionKey);
+          cs.conductedSessions += 1;
+        }
+      }
+    }
+
+    const courseWise = Array.from(courseSectionMap.values()).map((cs) => {
+      const rate = cs.totalRecords > 0 ? Math.round(((cs.present + cs.late) / cs.totalRecords) * 100) : 0;
+      return {
+        ...cs,
+        attendanceRate: rate,
+        percentage: rate,
+      };
+    });
+
     // Low attendance students (< 75%)
     const studentStats = new Map<string, {
       studentId: string;
@@ -2030,6 +2227,8 @@ router.get("/faculty/analytics", authenticateToken, async (req: AuthenticatedReq
       distributionData,
       trendData,
       subjectWise,
+      courseWise,
+      sectionWise: courseWise,
       lowAttendanceStudents,
       repeatedAbsences,
     });

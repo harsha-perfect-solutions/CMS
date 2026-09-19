@@ -85,7 +85,7 @@ function AnitsAttendancePage() {
   const isAdmin = ["super_admin", "superadmin", "admin", "principal", "academic_dean"].includes(normRole);
 
   // =========================================================================
-  // FACULTY STATE & LOGIC
+  // FACULTY STATE & LOGIC (POSTGRESQL BACKED PERSONAL WORKSPACE)
   // =========================================================================
   const [facultyClasses, setFacultyClasses] = useState<TodayClassItem[]>([]);
   const [facultyStats, setFacultyStats] = useState({
@@ -93,15 +93,61 @@ function AnitsAttendancePage() {
     pending: 0,
     presentToday: 0,
     absentToday: 0,
+    lateToday: 0,
     average: 0,
     leavesPending: 0,
   });
+  const [facultyHeaderData, setFacultyHeaderData] = useState({
+    academicYear: "2026-27",
+    semester: "Semester 5",
+    formattedDate: "Saturday, Sep 19, 2026",
+    targetDate: "2026-09-19",
+  });
+  const [facultyError, setFacultyError] = useState<string | null>(null);
+
   const [activeTab, setActiveTab] = useState(searchParams.tab || (searchParams.timetableId ? "mark" : "today"));
   const [activeFormSlot, setActiveFormSlot] = useState<TodayClassItem | null>(null);
   const [rosterStudents, setRosterStudents] = useState<AttendanceStudentItem[]>([]);
   const [loadingFaculty, setLoadingFaculty] = useState(isFaculty || isHod);
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Faculty History tab state
+  const [facultyHistory, setFacultyHistory] = useState<any[]>([]);
+  const [historyPagination, setHistoryPagination] = useState({
+    page: 1,
+    pageSize: 25,
+    total: 0,
+    totalPages: 1,
+  });
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historySemesterFilter, setHistorySemesterFilter] = useState("All");
+  const [historySectionFilter, setHistorySectionFilter] = useState("All");
+  const [historyCourseFilter, setHistoryCourseFilter] = useState("All");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("All");
+  const [historySearch, setHistorySearch] = useState("");
+
+  // Faculty Analytics tab state
+  const [facultyAnalytics, setFacultyAnalytics] = useState<{
+    hasData: boolean;
+    totalRecords: number;
+    distributionData: { name: string; value: number; count?: number }[];
+    trendData: { day: string; attendance: number; date?: string }[];
+    subjectWise: { code: string; name: string; total: number; attended: number; percentage: number }[];
+    courseWise: any[];
+    lowAttendanceStudents: any[];
+    repeatedAbsences: any[];
+  }>({
+    hasData: true,
+    totalRecords: 0,
+    distributionData: [],
+    trendData: [],
+    subjectWise: [],
+    courseWise: [],
+    lowAttendanceStudents: [],
+    repeatedAbsences: [],
+  });
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
   // =========================================================================
   // ADMIN & INSTITUTION-WIDE ATTENDANCE LEDGER STATE (POSTGRESQL DRIVEN)
@@ -526,22 +572,23 @@ function AnitsAttendancePage() {
   const fetchFacultyAttendance = useCallback(async () => {
     try {
       setLoadingFaculty(true);
+      setFacultyError(null);
       const res = await api.get("/api/attendance/faculty/today");
       if (res.data) {
-        setFacultyClasses(res.data.todayClasses || []);
-        setFacultyStats(
-          res.data.stats || {
-            conducted: 0,
-            pending: 0,
-            presentToday: 0,
-            absentToday: 0,
-            average: 0,
-            leavesPending: 0,
-          }
-        );
+        const slots = res.data.classes || res.data.todayClasses || [];
+        setFacultyClasses(slots);
+        if (res.data.stats) {
+          setFacultyStats(res.data.stats);
+        }
+        setFacultyHeaderData({
+          academicYear: res.data.academicYear || "2026-27",
+          semester: res.data.semester || "Semester 5",
+          formattedDate: res.data.formattedDate || new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "short", day: "numeric" }),
+          targetDate: res.data.targetDate || new Date().toISOString().split("T")[0],
+        });
 
-        if (searchParams.timetableId && res.data.todayClasses) {
-          const match = res.data.todayClasses.find((c: any) => c.timetableId === searchParams.timetableId);
+        if (searchParams.timetableId && slots.length > 0) {
+          const match = slots.find((c: any) => c.timetableId === searchParams.timetableId || c.id === searchParams.timetableId);
           if (match) {
             setActiveFormSlot(match);
             setActiveTab("mark");
@@ -549,23 +596,121 @@ function AnitsAttendancePage() {
         }
       }
     } catch (err: any) {
+      setFacultyError(err.response?.data?.error || "Unable to load today's attendance sessions. Please check server connection.");
       toast.error("Failed to load today's faculty classes.");
     } finally {
       setLoadingFaculty(false);
     }
   }, [searchParams.timetableId]);
 
+  const fetchFacultyHistory = useCallback(async (pageToFetch: number = 1) => {
+    try {
+      setLoadingHistory(true);
+      const params: Record<string, any> = {
+        page: pageToFetch,
+        pageSize: 25,
+      };
+      if (historySemesterFilter && historySemesterFilter !== "All") params.semester = historySemesterFilter;
+      if (historySectionFilter && historySectionFilter !== "All") params.section = historySectionFilter;
+      if (historyCourseFilter && historyCourseFilter !== "All") params.course = historyCourseFilter;
+      if (historyStatusFilter && historyStatusFilter !== "All") params.status = historyStatusFilter;
+      if (historySearch.trim()) params.search = historySearch.trim();
+
+      const res = await api.get("/api/attendance/faculty/history", { params });
+      if (res.data) {
+        const list = Array.isArray(res.data) ? res.data : (res.data.history || res.data.data || []);
+        setFacultyHistory(list);
+        if (res.data.pagination) {
+          setHistoryPagination(res.data.pagination);
+        } else {
+          setHistoryPagination({
+            page: pageToFetch,
+            pageSize: 25,
+            total: list.length,
+            totalPages: Math.ceil(list.length / 25) || 1,
+          });
+        }
+      }
+    } catch {
+      toast.error("Failed to load attendance submission history.");
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [historySemesterFilter, historySectionFilter, historyCourseFilter, historyStatusFilter, historySearch]);
+
+  const fetchFacultyAnalytics = useCallback(async () => {
+    try {
+      setLoadingAnalytics(true);
+      const res = await api.get("/api/attendance/faculty/analytics");
+      if (res.data) {
+        setFacultyAnalytics({
+          hasData: res.data.hasData !== false,
+          totalRecords: res.data.totalRecords || 0,
+          distributionData: res.data.distributionData || [],
+          trendData: res.data.trendData || [],
+          subjectWise: res.data.subjectWise || [],
+          courseWise: res.data.courseWise || res.data.sectionWise || [],
+          lowAttendanceStudents: res.data.lowAttendanceStudents || [],
+          repeatedAbsences: res.data.repeatedAbsences || [],
+        });
+      }
+    } catch {
+      toast.error("Failed to load class analytics.");
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  }, []);
+
+  const handleFacultyRefresh = async () => {
+    const toastId = toast.loading("Refreshing attendance records from PostgreSQL...");
+    try {
+      await Promise.all([
+        fetchFacultyAttendance(),
+        fetchFacultyHistory(historyPagination.page),
+        fetchFacultyAnalytics(),
+      ]);
+      toast.dismiss(toastId);
+      toast.success("Attendance records synchronized with PostgreSQL.");
+    } catch {
+      toast.dismiss(toastId);
+      toast.error("Failed to refresh attendance data.");
+    }
+  };
+
+  const handleFacultyExportCSV = async () => {
+    try {
+      const token = localStorage.getItem("token") || localStorage.getItem("cms_token");
+      const res = await fetch("http://localhost:5000/api/attendance/faculty/export?format=csv", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to export attendance");
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = `ANITS_Faculty_Attendance_${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      toast.success("Faculty attendance ledger exported successfully.");
+    } catch {
+      toast.error("Unable to export attendance ledger.");
+    }
+  };
+
   const loadRosterForSlot = async (slot: TodayClassItem) => {
     setActiveFormSlot(slot);
     setLoadingRoster(true);
     try {
-      const res = await api.get(`/api/attendance/faculty/session/${slot.timetableId}/roster`);
+      const timetableId = slot.timetableId || slot.id;
+      const res = await api.get(`/api/attendance/faculty/session/${timetableId}/roster`);
       if (res.data && res.data.students) {
         setRosterStudents(res.data.students);
         setActiveTab("mark");
       }
     } catch (err: any) {
-      toast.error("Failed to load session roster from PostgreSQL.");
+      toast.error(err.response?.data?.error || "Failed to load session roster from PostgreSQL.");
     } finally {
       setLoadingRoster(false);
     }
@@ -580,18 +725,33 @@ function AnitsAttendancePage() {
     const toastId = toast.loading("Submitting verified attendance to PostgreSQL...");
 
     try {
-      const res = await api.post(`/api/attendance/faculty/session/${activeFormSlot.timetableId}/mark`, {
-        date: new Date().toISOString().split("T")[0],
+      const timetableId = activeFormSlot.timetableId || activeFormSlot.id;
+      const isEditing = Boolean(
+        activeFormSlot.attendanceSubmitted ||
+        activeFormSlot.status === "Completed" ||
+        activeFormSlot.status === "ATTENDANCE SUBMITTED"
+      );
+
+      const res = await api.post(`/api/attendance/faculty/session/${timetableId}/mark`, {
+        date: activeFormSlot.time?.includes("202") ? activeFormSlot.time : new Date().toISOString().split("T")[0],
         students: data.students,
         summary: data.summary,
+        allowUpdate: isEditing,
+        overwrite: isEditing,
       });
 
       if (res.status === 200) {
         toast.dismiss(toastId);
-        toast.success("Attendance successfully committed to PostgreSQL database.");
+        toast.success(
+          isEditing
+            ? "Attendance records corrected and audit log recorded."
+            : "Attendance successfully committed to PostgreSQL database."
+        );
         setActiveFormSlot(null);
         setActiveTab("today");
         fetchFacultyAttendance();
+        fetchFacultyHistory(1);
+        fetchFacultyAnalytics();
       }
     } catch (err: any) {
       toast.dismiss(toastId);
@@ -606,6 +766,16 @@ function AnitsAttendancePage() {
       fetchFacultyAttendance();
     }
   }, [isFaculty, isHod, fetchFacultyAttendance]);
+
+  useEffect(() => {
+    if (isFaculty) {
+      if (activeTab === "history") {
+        fetchFacultyHistory(1);
+      } else if (activeTab === "analytics") {
+        fetchFacultyAnalytics();
+      }
+    }
+  }, [isFaculty, activeTab, fetchFacultyHistory, fetchFacultyAnalytics]);
 
   // =========================================================================
   // STUDENT STATE & LOGIC
@@ -698,11 +868,45 @@ function AnitsAttendancePage() {
 
     return (
       <div className="space-y-6">
-        <AttendanceHeader
-          academicYear="2026-27"
-          semester="5"
-          currentDate={new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "short", day: "numeric" })}
-        />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex-1">
+            <AttendanceHeader
+              academicYear={facultyHeaderData.academicYear}
+              semester={facultyHeaderData.semester}
+              currentDate={facultyHeaderData.formattedDate}
+            />
+          </div>
+          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 pt-2 sm:pt-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleFacultyRefresh}
+              className="h-9 rounded-xl text-xs font-semibold gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className="size-3.5" /> Refresh
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleFacultyExportCSV}
+              className="h-9 rounded-xl text-xs font-semibold gap-1.5 cursor-pointer"
+            >
+              <Download className="size-3.5" /> Export Ledger
+            </Button>
+          </div>
+        </div>
+
+        {facultyError && (
+          <div className="p-4 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="size-4 shrink-0" />
+              <span className="font-semibold">{facultyError}</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={handleFacultyRefresh} className="h-7 text-xs cursor-pointer">
+              Retry
+            </Button>
+          </div>
+        )}
 
         <StatisticsCards attendanceData={{ stats: facultyStats } as any} />
 
@@ -753,14 +957,194 @@ function AnitsAttendancePage() {
             </TabsContent>
           )}
 
-          {/* History */}
+          {/* Attendance History */}
           <TabsContent value="history" className="space-y-4">
-            <AttendanceHistory history={[]} isLoading={false} />
+            {/* Filter Bar */}
+            <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs flex flex-col md:flex-row gap-3 items-center justify-between text-xs">
+              <div className="relative w-full md:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search subject, section, room..."
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  className="pl-9 h-9 text-xs rounded-xl bg-background"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <select
+                  value={historySemesterFilter}
+                  onChange={(e) => setHistorySemesterFilter(e.target.value)}
+                  className="h-9 px-3 text-xs rounded-xl border bg-background text-foreground font-medium"
+                >
+                  <option value="All">All Semesters</option>
+                  <option value="1">Semester 1</option>
+                  <option value="3">Semester 3</option>
+                  <option value="5">Semester 5</option>
+                  <option value="7">Semester 7</option>
+                </select>
+
+                <select
+                  value={historySectionFilter}
+                  onChange={(e) => setHistorySectionFilter(e.target.value)}
+                  className="h-9 px-3 text-xs rounded-xl border bg-background text-foreground font-medium"
+                >
+                  <option value="All">All Sections</option>
+                  <option value="A">Section A</option>
+                  <option value="B">Section B</option>
+                  <option value="C">Section C</option>
+                </select>
+
+                <select
+                  value={historyStatusFilter}
+                  onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                  className="h-9 px-3 text-xs rounded-xl border bg-background text-foreground font-medium"
+                >
+                  <option value="All">All Statuses</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="good">Good (75% or higher)</option>
+                  <option value="shortage">Shortage (Below 75%)</option>
+                </select>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setHistorySearch("");
+                    setHistorySemesterFilter("All");
+                    setHistorySectionFilter("All");
+                    setHistoryStatusFilter("All");
+                    fetchFacultyHistory(1);
+                  }}
+                  className="h-9 rounded-xl text-xs font-semibold gap-1 text-muted-foreground hover:text-foreground"
+                >
+                  <RotateCcw className="size-3.5" /> Reset
+                </Button>
+              </div>
+            </div>
+
+            <AttendanceHistory history={facultyHistory} isLoading={loadingHistory} />
+
+            {/* Pagination Controls */}
+            {historyPagination.totalPages > 1 && (
+              <div className="flex items-center justify-between px-2 pt-2 text-xs text-muted-foreground font-medium">
+                <span>
+                  Showing {(historyPagination.page - 1) * historyPagination.pageSize + 1} to{" "}
+                  {Math.min(historyPagination.page * historyPagination.pageSize, historyPagination.total)} of{" "}
+                  {historyPagination.total} submitted sessions
+                </span>
+
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={historyPagination.page <= 1 || loadingHistory}
+                    onClick={() => fetchFacultyHistory(historyPagination.page - 1)}
+                    className="h-8 px-2.5 rounded-lg text-xs"
+                  >
+                    <ChevronLeft className="size-3.5" /> Prev
+                  </Button>
+                  <span className="px-2 font-mono font-bold text-foreground">
+                    Page {historyPagination.page} of {historyPagination.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={historyPagination.page >= historyPagination.totalPages || loadingHistory}
+                    onClick={() => fetchFacultyHistory(historyPagination.page + 1)}
+                    className="h-8 px-2.5 rounded-lg text-xs"
+                  >
+                    Next <ChevronRight className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </TabsContent>
 
-          {/* Analytics */}
-          <TabsContent value="analytics" className="space-y-4">
-            <AttendanceAnalytics />
+          {/* Class Analytics */}
+          <TabsContent value="analytics" className="space-y-6">
+            <AttendanceAnalytics
+              hasData={facultyAnalytics.hasData}
+              totalRecords={facultyAnalytics.totalRecords}
+              distributionData={facultyAnalytics.distributionData}
+              trendData={facultyAnalytics.trendData}
+              subjectWise={facultyAnalytics.subjectWise}
+              lowAttendanceStudents={facultyAnalytics.lowAttendanceStudents}
+              repeatedAbsences={facultyAnalytics.repeatedAbsences}
+              isLoading={loadingAnalytics}
+            />
+
+            {/* Course-Wise & Section-Wise Analytics Matrix (Requirement 23) */}
+            {facultyAnalytics.courseWise && facultyAnalytics.courseWise.length > 0 && (
+              <Card className="border border-border/70 rounded-2xl shadow-card overflow-hidden">
+                <CardHeader className="p-5 border-b border-border/60 bg-muted/20">
+                  <CardTitle className="text-sm font-bold text-foreground">
+                    Course & Section-Wise Attendance Analytics
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Aggregated PostgreSQL performance metrics across your assigned teaching load
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-0 overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border/60">
+                      <tr>
+                        <th className="p-3.5">Course</th>
+                        <th className="p-3.5 text-center">Section</th>
+                        <th className="p-3.5 text-center">Conducted Sessions</th>
+                        <th className="p-3.5 text-center">Attendance Records</th>
+                        <th className="p-3.5 text-center text-emerald-600">Present</th>
+                        <th className="p-3.5 text-center text-rose-600">Absent</th>
+                        <th className="p-3.5 text-center text-amber-600">Late</th>
+                        <th className="p-3.5 text-right">Attendance %</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {facultyAnalytics.courseWise.map((cw: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-muted/10 transition-colors">
+                          <td className="p-3.5">
+                            <div className="font-bold text-foreground">{cw.courseName}</div>
+                            <div className="font-mono text-[0.68rem] text-primary">{cw.courseCode}</div>
+                          </td>
+                          <td className="p-3.5 text-center font-semibold">
+                            <Badge variant="outline" className="text-[0.65rem]">
+                              {cw.section}
+                            </Badge>
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-bold text-foreground">
+                            {cw.conductedSessions}
+                          </td>
+                          <td className="p-3.5 text-center font-mono text-muted-foreground">
+                            {cw.totalRecords}
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-bold text-emerald-600">
+                            {cw.present}
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-bold text-rose-600">
+                            {cw.absent}
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-bold text-amber-600">
+                            {cw.late}
+                          </td>
+                          <td className="p-3.5 text-right font-mono font-bold">
+                            <Badge
+                              variant="outline"
+                              className={`text-[0.65rem] font-bold ${
+                                cw.attendanceRate >= 75
+                                  ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                                  : "bg-rose-500/10 text-rose-600 border-rose-500/20"
+                              }`}
+                            >
+                              {cw.attendanceRate}%
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       </div>

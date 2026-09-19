@@ -769,15 +769,24 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
       });
     }
 
-    const academicYear = (req.query.academicYear as string) || "2026-27";
+    // 2. Derive academic year from MasterTimetable records (canonical DB value first, then query param)
+    // Find the most recent academic year this faculty has assignments in
+    const latestRecord = await prisma.masterTimetable.findFirst({
+      where: { facultyId: faculty.id },
+      orderBy: { createdAt: "desc" },
+      select: { academicYear: true },
+    });
+    const canonicalAcademicYear = (req.query.academicYear as string) ||
+      latestRecord?.academicYear ||
+      new Date().getFullYear().toString().slice(-2) + "-" + (new Date().getFullYear() + 1).toString().slice(-2);
 
-    // 2. Query all MasterTimetable records assigned to this authenticated faculty in PostgreSQL
+    // 3. Query all MasterTimetable records assigned to this authenticated faculty in PostgreSQL
     const allFacultyRecords = await prisma.masterTimetable.findMany({
       where: {
         facultyId: faculty.id,
-        ...(academicYear ? { academicYear } : {}),
+        academicYear: canonicalAcademicYear,
       },
-      include: { course: true, faculty: true },
+      include: { course: true },
       orderBy: [{ day: "asc" }, { periodNumber: "asc" }],
     });
 
@@ -791,7 +800,7 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
       ? allFacultyRecords.filter((r) => r.semester === requestedSemester)
       : allFacultyRecords;
 
-    const activeSemester = requestedSemester || availableSemesters[0] || 5;
+    const activeSemester = requestedSemester || availableSemesters[0] || null;
 
     // 3. Dynamic Teaching Load calculations from PostgreSQL
     const weeklyClasses = records.length;
@@ -814,18 +823,22 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
       totalSections,
     };
 
-    // 4. Current Day and Time calculations
-    const now = new Date();
-    const todayName = now.toLocaleDateString("en-US", { weekday: "long" });
-    const currentDateFormatted = now.toLocaleDateString("en-US", {
+    // 4. Current Day and Time — MUST use IST timezone (ANITS is located in Vizag, India)
+    const IST_OFFSET_MINS = 330; // UTC+5:30
+    const nowUtc = new Date();
+    const nowIst = new Date(nowUtc.getTime() + IST_OFFSET_MINS * 60 * 1000);
+    const todayName = nowIst.toLocaleDateString("en-US", { weekday: "long" });
+    const currentDateFormatted = nowIst.toLocaleDateString("en-IN", {
       weekday: "long",
       year: "numeric",
       month: "long",
       day: "numeric",
+      timeZone: "Asia/Kolkata",
     });
-    const currentMins = now.getHours() * 60 + now.getMinutes();
+    // IST current minutes within the day
+    const currentMins = nowIst.getUTCHours() * 60 + nowIst.getUTCMinutes();
 
-    // Standard period time mapping
+    // ANITS canonical period time mapping (must match TIME_SLOTS in frontend)
     const PERIOD_TO_TIMESLOT: Record<number, string> = {
       1: "08:45 - 09:45",
       2: "09:45 - 10:45",
@@ -870,7 +883,7 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
         rawSection: r.section,
         semester: r.semester,
         branch: r.branch,
-        room: r.roomNo || "Room 101",
+        room: r.roomNo || "Room not assigned",
         sessionType: r.isLab ? "Lab" : "Theory",
         type: r.isLab ? "Lab" : "Theory",
         isLab: r.isLab,
@@ -895,7 +908,7 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
         subject: r.course ? r.course.name : "Assigned Lecture",
         code: r.course ? r.course.code : "",
         section: `${r.branch}-${r.semester}${cleanSec}`,
-        room: r.roomNo || "Room 101",
+        room: r.roomNo || "Room not assigned",
         building: r.roomNo?.includes("Block") ? r.roomNo.split("-")[0].trim() : "Main Academic Block",
         type: (r.isLab ? "Lab" : "Theory") as "Theory" | "Lab",
         role: "Faculty Instructor",
@@ -907,18 +920,45 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
       };
     });
 
-    // 7. Upcoming Classes
-    const upcomingClasses = todaySchedule
-      .filter((s) => s.status === "Upcoming" || s.status === "Ongoing")
-      .map((s) => ({
-        subject: s.subject,
-        code: s.subjectCode,
-        time: s.time,
-        room: s.room,
-        building: s.room.includes("Block") ? s.room.split("-")[0].trim() : "Academic Block",
-        section: s.section,
-        countdown: s.status === "Ongoing" ? "In Session" : "Starts today",
-      }));
+    // 7. Upcoming Classes — next 5 sessions from now (across all weekdays, not just today)
+    // Build ordered day sequence starting from today
+    const DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const todayIdx = DAY_ORDER.indexOf(todayName);
+
+    // Sort all records by (day offset from today, then periodNumber)
+    const sortedAllRecords = [...records].sort((a, b) => {
+      const aIdx = (DAY_ORDER.indexOf(a.day) - todayIdx + 7) % 7;
+      const bIdx = (DAY_ORDER.indexOf(b.day) - todayIdx + 7) % 7;
+      if (aIdx !== bIdx) return aIdx - bIdx;
+      return a.periodNumber - b.periodNumber;
+    });
+
+    // Filter to only sessions that haven't ended yet (today's completed ones excluded)
+    const upcomingClasses = sortedAllRecords
+      .filter((r) => {
+        const isToday = r.day === todayName;
+        const endMins = parseTimeToMinutes(r.endTime);
+        // If it's today, exclude already completed sessions
+        if (isToday && endMins <= currentMins) return false;
+        return true;
+      })
+      .slice(0, 5)
+      .map((r) => {
+        const isToday = r.day === todayName;
+        const startMins = parseTimeToMinutes(r.startTime);
+        const endMins = parseTimeToMinutes(r.endTime);
+        const isOngoing = isToday && currentMins >= startMins && currentMins < endMins;
+        const cleanSec = formatSectionDisplay(r.section).clean;
+        return {
+          subject: r.course ? r.course.name : "Assigned Lecture",
+          code: r.course ? r.course.code : "",
+          time: `${r.startTime} - ${r.endTime}`,
+          room: r.roomNo || "Room not assigned",
+          building: r.roomNo?.includes("Block") ? r.roomNo.split("-")[0].trim() : "Main Academic Block",
+          section: `${r.branch}-${r.semester}${cleanSec}`,
+          countdown: isOngoing ? "In Session" : isToday ? "Starts today" : `${r.day}`,
+        };
+      });
 
     // 8. Room Allocations
     const roomMap = new Map<string, any>();
@@ -933,6 +973,7 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
           building: r.roomNo.includes("Block") ? r.roomNo.split("-")[0].trim() : "Main Academic Block",
           type: r.isLab ? "Lab" : "Theory",
           capacity: r.isLab ? 40 : 60,
+          semester: r.semester,
         });
       }
     }
@@ -980,30 +1021,31 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
       }
     }
 
-    // Determine designation
+    // Determine designation based on DB role only (no name-heuristics)
     const designation =
-      faculty.role === "hod"
-        ? "HOD & Professor"
-        : faculty.name.includes("Dr.")
-        ? "Associate Professor"
-        : "Assistant Professor";
+      faculty.role === "hod" ? "HOD & Professor"
+      : faculty.role === "professor" ? "Professor"
+      : "Faculty Member";
 
-    const resolvedAy = records.length > 0 ? (records[0].academicYear || academicYear) : academicYear;
+    const resolvedAy = allFacultyRecords.length > 0
+      ? (allFacultyRecords[0].academicYear || canonicalAcademicYear)
+      : canonicalAcademicYear;
 
     return res.json({
       faculty: {
         id: faculty.id,
         name: faculty.name,
         rollNumber: faculty.rollNumber,
-        department: faculty.department || "CSE",
+        department: faculty.department || null,
         designation,
         email: faculty.email,
         role: faculty.role,
       },
       academicYear: resolvedAy,
       activeSemester,
-      availableSemesters: availableSemesters.length > 0 ? availableSemesters : [5],
-      academicWeek: (req.query.week as string) || "Week 5 (Active)",
+      availableSemesters,
+      // No hardcoded week label — either supplied as query param or omitted
+      academicWeek: (req.query.week as string) || null,
       currentDate: currentDateFormatted,
       todaySchedule,
       teachingLoad,
@@ -1064,10 +1106,11 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
       }
     }
 
-    // If still not resolved and user is super_admin/admin, default to Dr. Ravi Kumar for seamless administrative preview
+    // If still not resolved and user is super_admin/admin, query active faculty for administrative preview
     if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
       faculty = await prisma.faculty.findFirst({
-        where: { email: "faculty@cms.com" },
+        where: { status: "Active" },
+        orderBy: { name: "asc" },
         select: {
           id: true,
           rollNumber: true,
@@ -1487,7 +1530,8 @@ router.get("/my-classes-students/export", authenticateToken, async (req: Authent
 
     if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
       faculty = await prisma.faculty.findFirst({
-        where: { email: "faculty@cms.com" },
+        where: { status: "Active" },
+        orderBy: { name: "asc" },
         select: { id: true, name: true, department: true },
       });
     }
@@ -1570,7 +1614,8 @@ router.get(["/subjects", "/my-subjects"], authenticateToken, async (req: Authent
     // Fallback for Super Admin / Admin testing
     if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
       faculty = await prisma.faculty.findFirst({
-        where: { email: "faculty@cms.com" },
+        where: { status: "Active" },
+        orderBy: { name: "asc" },
         select: {
           id: true,
           rollNumber: true,
