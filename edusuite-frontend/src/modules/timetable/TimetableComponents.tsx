@@ -96,7 +96,26 @@ export function TimetableModuleView({
   }, [isHod, hodDept]);
 
   const [viewMode, setViewMode] = useState<"grid" | "faculty" | "room">(initialTab);
-  const [selectedFacultyFilter, setSelectedFacultyFilter] = useState("Dr. K. Sai Teja");
+  const [selectedFacultyFilter, setSelectedFacultyFilter] = useState("");
+
+  const departmentFacultyList = useMemo(() => {
+    if (!gridData?.schedule || gridData.schedule.length === 0) return [];
+    const set = new Set<string>();
+    for (const p of gridData.schedule) {
+      if (p.facultyName && p.facultyName.trim()) {
+        set.add(p.facultyName.trim());
+      }
+    }
+    return Array.from(set).sort();
+  }, [gridData?.schedule]);
+
+  useEffect(() => {
+    if (departmentFacultyList.length > 0) {
+      if (!selectedFacultyFilter || !departmentFacultyList.includes(selectedFacultyFilter)) {
+        setSelectedFacultyFilter(departmentFacultyList[0]);
+      }
+    }
+  }, [departmentFacultyList, selectedFacultyFilter]);
 
   useEffect(() => {
     if (initialTab) {
@@ -665,13 +684,19 @@ export function TimetableModuleView({
 
             <div className="flex items-center gap-2">
               <Select value={selectedFacultyFilter} onValueChange={setSelectedFacultyFilter}>
-                <SelectTrigger className="h-9 text-xs font-bold w-[220px] rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9 text-xs font-bold w-[220px] rounded-xl"><SelectValue placeholder="Select faculty..." /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Dr. K. Sai Teja">Dr. K. Sai Teja (CSE)</SelectItem>
-                  <SelectItem value="Dr. Rajesh K. Varma">Dr. Rajesh K. Varma (CSE)</SelectItem>
-                  <SelectItem value="Dr. Meera Nambiar">Dr. Meera Nambiar (ECE)</SelectItem>
-                  <SelectItem value="Prof. Arvind Swaminathan">Prof. Arvind Swaminathan (AI&DS)</SelectItem>
-                  <SelectItem value="Dr. Sankar Narayan">Dr. Sankar Narayan (ME)</SelectItem>
+                  {departmentFacultyList.length === 0 ? (
+                    <SelectItem value="none" disabled className="text-xs">
+                      No faculty scheduled
+                    </SelectItem>
+                  ) : (
+                    departmentFacultyList.map((fName) => (
+                      <SelectItem key={fName} value={fName} className="text-xs font-bold">
+                        {fName} ({selectedBranch})
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>

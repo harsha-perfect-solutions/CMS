@@ -143,11 +143,17 @@ function AnitsReportsPage() {
 
   // Filters
   const [academicYear, setAcademicYear] = useState<string>("2026-27");
-  const [selectedDept, setSelectedDept] = useState<string>("");
+  const [selectedDept, setSelectedDept] = useState<string>(isHod ? (userDept || "") : "");
   const [selectedSemester, setSelectedSemester] = useState<string>("");
   const [selectedSection, setSelectedSection] = useState<string>("");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
+
+  useEffect(() => {
+    if (isHod && userDept && selectedDept !== userDept) {
+      setSelectedDept(userDept);
+    }
+  }, [isHod, userDept, selectedDept]);
 
   // Report Data state
   const [reportData, setReportData] = useState<ReportResponse | null>(null);
@@ -200,8 +206,9 @@ function AnitsReportsPage() {
       params.append("page", currentPage.toString());
       params.append("limit", pageSize.toString());
 
+      const deptToUse = isHod ? (userDept || selectedDept) : selectedDept;
       if (academicYear) params.append("academicYear", academicYear);
-      if (selectedDept && selectedDept !== "all") params.append("department", selectedDept);
+      if (deptToUse && deptToUse !== "all") params.append("department", deptToUse);
       if (selectedSemester && selectedSemester !== "all") params.append("semester", selectedSemester);
       if (selectedSection && selectedSection !== "all") params.append("section", selectedSection);
       if (dateFrom) params.append("dateFrom", dateFrom);
@@ -231,6 +238,8 @@ function AnitsReportsPage() {
     selectedSection,
     dateFrom,
     dateTo,
+    isHod,
+    userDept,
   ]);
 
   // Initial Load
@@ -244,13 +253,13 @@ function AnitsReportsPage() {
 
   // Reset Filters
   const handleResetFilters = () => {
-    setSelectedDept("");
+    setSelectedDept(isHod ? (userDept || "") : "");
     setSelectedSemester("");
     setSelectedSection("");
     setDateFrom("");
     setDateTo("");
     setCurrentPage(1);
-    toast.info("Report filters reset to institution defaults.");
+    toast.info("Report filters reset to defaults.");
   };
 
   // Download Filtered CSV
@@ -262,7 +271,8 @@ function AnitsReportsPage() {
       params.append("category", activeCategory);
       params.append("reportType", activeReportType);
       if (academicYear) params.append("academicYear", academicYear);
-      if (selectedDept && selectedDept !== "all") params.append("department", selectedDept);
+      const deptToUse = isHod ? (userDept || selectedDept) : selectedDept;
+      if (deptToUse && deptToUse !== "all") params.append("department", deptToUse);
       if (selectedSemester && selectedSemester !== "all") params.append("semester", selectedSemester);
       if (selectedSection && selectedSection !== "all") params.append("section", selectedSection);
       if (dateFrom) params.append("dateFrom", dateFrom);
@@ -525,16 +535,18 @@ function AnitsReportsPage() {
             Refresh
           </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportDeptSummary}
-            disabled={exporting === "dept_summary"}
-            className="h-9 text-xs font-semibold gap-1.5 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50/50 dark:hover:bg-blue-950/40"
-          >
-            <Building2 className="size-3.5" />
-            Export Department Summary
-          </Button>
+          {!isHod && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportDeptSummary}
+              disabled={exporting === "dept_summary"}
+              className="h-9 text-xs font-semibold gap-1.5 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50/50 dark:hover:bg-blue-950/40"
+            >
+              <Building2 className="size-3.5" />
+              Export Department Summary
+            </Button>
+          )}
 
           <Button
             variant="outline"
@@ -638,8 +650,10 @@ function AnitsReportsPage() {
             { id: "students", label: "Students", icon: GraduationCap },
             { id: "faculty", label: "Faculty", icon: Users },
             { id: "classes", label: "Classes", icon: Layers },
-            { id: "departments", label: "Departments", icon: Building2 },
-            { id: "data-quality", label: "Data Quality", icon: ShieldCheck },
+            ...(!isHod ? [
+              { id: "departments", label: "Departments", icon: Building2 },
+              { id: "data-quality", label: "Data Quality", icon: ShieldCheck },
+            ] : []),
           ].map((cat) => {
             const Icon = cat.icon;
             const isActive = activeCategory === cat.id;
@@ -736,21 +750,27 @@ function AnitsReportsPage() {
             {/* Department */}
             <div>
               <label className="text-[11px] font-medium text-muted-foreground block mb-1">Department</label>
-              <select
-                value={selectedDept}
-                onChange={(e) => {
-                  setSelectedDept(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="w-full h-8 text-xs rounded-md border border-border/80 bg-background px-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="">All Departments</option>
-                {overview?.departments?.map((d) => (
-                  <option key={d.code} value={d.code}>
-                    {d.code} — {d.name}
-                  </option>
-                ))}
-              </select>
+              {isHod ? (
+                <div className="w-full h-8 text-xs rounded-md border border-primary/40 bg-primary/10 px-2.5 flex items-center font-bold text-primary">
+                  {userDept || "Department"} (Scoped)
+                </div>
+              ) : (
+                <select
+                  value={selectedDept}
+                  onChange={(e) => {
+                    setSelectedDept(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full h-8 text-xs rounded-md border border-border/80 bg-background px-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">All Departments</option>
+                  {overview?.departments?.map((d) => (
+                    <option key={d.code} value={d.code}>
+                      {d.code} — {d.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {/* Semester */}

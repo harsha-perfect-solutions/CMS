@@ -5,6 +5,7 @@ import { prisma } from "../../db";
 import { authenticateToken, AuthenticatedRequest } from "../auth/auth.routes";
 import { getMatchingDepartments } from "../attendance/attendance.routes";
 import { AnitsReportsService } from "./anits-reports.service";
+import { AnitsHodService } from "./anits-hod.service";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "edusuite_super_secret_key_change_me_in_production";
@@ -871,82 +872,16 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
     }
 
     if (anitsRole === "HOD") {
-      let dept = req.userDepartment;
-      if (!dept) {
-        const fac = await prisma.faculty.findUnique({ where: { id: authUserId }, select: { department: true } });
-        dept = fac?.department || "CSE";
-      }
-
-      const [deptStudents, deptFaculty, deptTodaySlots, deptAttendanceRecords] = await Promise.all([
-        prisma.student.findMany({
-          where: { department: { equals: dept, mode: "insensitive" } },
-          select: { id: true },
-        }),
-        prisma.faculty.count({ where: { department: { equals: dept, mode: "insensitive" }, status: "Active" } }),
-        prisma.masterTimetable.findMany({
-          where: {
-            branch: { equals: dept, mode: "insensitive" },
-            day: { equals: dayName, mode: "insensitive" },
-          },
-          include: { course: true, faculty: true },
-        }),
-        prisma.attendanceRecord.findMany({
-          where: {
-            timetable: { branch: { equals: dept, mode: "insensitive" } },
-          },
-          select: { userId: true, status: true, timetableId: true, date: true },
-        }),
-      ]);
-
-      const deptStudentIds = new Set(deptStudents.map((s) => s.id));
-      const relevantRecords = deptAttendanceRecords.filter((r) => deptStudentIds.has(r.userId));
-
-      const totalConducted = relevantRecords.length;
-      const presentCount = relevantRecords.filter((r) => r.status === "Present" || r.status === "Late").length;
-      const deptAttendancePct = totalConducted > 0 ? Number(((presentCount / totalConducted) * 100).toFixed(1)) : 85.0;
-
-      // Calculate students below 75%
-      const studentAgg: Record<string, { total: number; attended: number }> = {};
-      relevantRecords.forEach((r) => {
-        if (!studentAgg[r.userId]) studentAgg[r.userId] = { total: 0, attended: 0 };
-        studentAgg[r.userId].total++;
-        if (r.status === "Present" || r.status === "Late") studentAgg[r.userId].attended++;
-      });
-      let shortageCount = 0;
-      Object.values(studentAgg).forEach((s) => {
-        if (s.total > 0 && (s.attended / s.total) * 100 < 75.0) shortageCount++;
-      });
-
-      const todaySubmittedIds = new Set(relevantRecords.filter((r) => r.date === today).map((r) => r.timetableId));
-      const pendingCount = Math.max(0, deptTodaySlots.length - todaySubmittedIds.size);
-
+      const ctx = await AnitsHodService.resolveHodContext(
+        authUserId,
+        authRole,
+        req.userDepartment,
+        req.query.department as string
+      );
+      const data = await AnitsHodService.getHodDashboardData(ctx);
       return res.json({
         anitsRole,
-        department: dept,
-        academicYear: "2026-27",
-        date: today,
-        day: dayName,
-        metrics: {
-          departmentStudents: deptStudents.length,
-          departmentFaculty: deptFaculty,
-          todayClassesCount: deptTodaySlots.length,
-          attendanceSubmittedCount: todaySubmittedIds.size,
-          attendancePendingCount: pendingCount,
-          departmentAttendancePercentage: deptAttendancePct,
-          studentsBelow75Percent: shortageCount,
-        },
-        todaySchedule: deptTodaySlots.map((s) => ({
-          id: s.id,
-          branch: s.branch,
-          semester: s.semester,
-          section: s.section,
-          periodNumber: s.periodNumber,
-          time: `${s.startTime} - ${s.endTime}`,
-          subject: s.course ? `${s.course.code} - ${s.course.name}` : "Assigned Lecture",
-          faculty: s.faculty ? s.faculty.name : "Faculty Member",
-          roomNo: s.roomNo || "Room 101",
-          isConducted: todaySubmittedIds.has(s.id),
-        })),
+        ...data,
       });
     }
 
@@ -3337,6 +3272,191 @@ router.get("/super-admin/reports/department-summary/export", authenticateToken, 
     return res.status(200).send(csvContent);
   } catch (error: any) {
     return res.status(500).json({ error: error.message || "Failed to export department summary CSV." });
+  }
+});
+
+// =========================================================================
+// HOD PORTAL DEDICATED DEPARTMENT-SCOPED ENDPOINTS
+// =========================================================================
+
+async function isHodOrAdmin(req: AuthenticatedRequest): Promise<boolean> {
+  const anitsRole = resolveAnitsRole(req.userRole || "");
+  if (anitsRole === "HOD" || anitsRole === "ANITS_ADMIN") return true;
+  if (req.userId) {
+    const fac = await prisma.faculty.findUnique({
+      where: { id: req.userId },
+      select: { role: true },
+    });
+    if (fac?.role?.toLowerCase() === "hod") return true;
+  }
+  return false;
+}
+
+// GET /api/anits/hod/dashboard: Dynamic department dashboard
+router.get("/hod/dashboard", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({ error: "Access denied. HOD role required." });
+    }
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    const data = await AnitsHodService.getHodDashboardData(ctx);
+    return res.json(data);
+  } catch (error: any) {
+    console.error("GET /api/anits/hod/dashboard error:", error);
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load HOD dashboard." });
+  }
+});
+
+// GET /api/anits/hod/attendance/ledger: Department attendance ledger
+router.get("/hod/attendance/ledger", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({ error: "Access denied. HOD role required." });
+    }
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    const data = await AnitsHodService.getHodAttendanceLedger(ctx, req.query as any);
+    return res.json(data);
+  } catch (error: any) {
+    console.error("GET /api/anits/hod/attendance/ledger error:", error);
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load attendance ledger." });
+  }
+});
+
+// GET /api/anits/hod/attendance/faculty-conduction: Faculty conduction audit
+router.get("/hod/attendance/faculty-conduction", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({ error: "Access denied. HOD role required." });
+    }
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    const data = await AnitsHodService.getHodFacultyConduction(ctx);
+    return res.json(data);
+  } catch (error: any) {
+    console.error("GET /api/anits/hod/attendance/faculty-conduction error:", error);
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load faculty conduction." });
+  }
+});
+
+// GET /api/anits/hod/attendance/students: Department student attendance with threshold audit
+router.get("/hod/attendance/students", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({ error: "Access denied. HOD role required." });
+    }
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    const data = await AnitsHodService.getHodStudentAttendance(ctx, req.query as any);
+    return res.json(data);
+  } catch (error: any) {
+    console.error("GET /api/anits/hod/attendance/students error:", error);
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load student attendance." });
+  }
+});
+
+// GET /api/anits/hod/attendance/student/:id: Student attendance drilldown
+router.get("/hod/attendance/student/:id", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({ error: "Access denied. HOD role required." });
+    }
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    const data = await AnitsHodService.getHodStudentDetails(ctx, req.params.id);
+    return res.json(data);
+  } catch (error: any) {
+    console.error("GET /api/anits/hod/attendance/student/:id error:", error);
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load student attendance details." });
+  }
+});
+
+// GET /api/anits/hod/attendance/export: Filter-aware department attendance CSV
+router.get("/hod/attendance/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({ error: "Access denied. HOD role required." });
+    }
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    const csvContent = await AnitsHodService.exportHodAttendanceCSV(ctx, req.query as any);
+    const dateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+
+    try {
+      await prisma.auditLog.create({
+        data: {
+          actorId: req.userId,
+          actorName: ctx.hodName,
+          actorRole: "hod",
+          action: "REPORT_EXPORTED",
+          module: "HOD_Attendance",
+          targetEntity: `department:${ctx.deptCode}`,
+          status: "Success",
+        },
+      });
+    } catch (_) {}
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="ANITS_${ctx.deptCode}_Attendance_Ledger_${dateStr}.csv"`
+    );
+    return res.send(csvContent);
+  } catch (error: any) {
+    console.error("GET /api/anits/hod/attendance/export error:", error);
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to export attendance." });
+  }
+});
+
+// GET /api/anits/hod/search: Department-scoped search for HOD
+router.get("/hod/search", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({ error: "Access denied. HOD role required." });
+    }
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    const results = await AnitsHodService.searchHodDepartment(ctx, req.query.q as string);
+    return res.json(results);
+  } catch (error: any) {
+    console.error("GET /api/anits/hod/search error:", error);
+    return res.status(error.statusCode || 500).json({ error: error.message || "Search failed." });
   }
 });
 

@@ -1,8 +1,25 @@
 import { Router, Response } from "express";
 import { prisma } from "../../db";
 import { authenticateToken, AuthenticatedRequest } from "../auth/auth.routes";
+import { AnitsHodService } from "../anits/anits-hod.service";
 
 const router = Router();
+
+// GET /api/hod/dashboard: Dynamic department dashboard
+router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      req.query.department as string
+    );
+    const data = await AnitsHodService.getHodDashboardData(ctx);
+    return res.json(data);
+  } catch (error: any) {
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load HOD dashboard." });
+  }
+});
 
 // Department code to prefix / aliases map
 function resolveDeptAliases(dept: string): { code: string; fullNames: string[]; prefix: string } {

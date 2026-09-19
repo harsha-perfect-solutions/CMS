@@ -98,7 +98,10 @@ export function AnitsHeader({
     setIsSearching(true);
     const timer = setTimeout(async () => {
       try {
-        const res = await api.get("/api/anits/super-admin/search", {
+        const searchEndpoint = user?.anitsRole === "HOD"
+          ? "/api/anits/hod/search"
+          : "/api/anits/super-admin/search";
+        const res = await api.get(searchEndpoint, {
           params: { q },
         });
         setSearchResults(res.data);
@@ -111,7 +114,7 @@ export function AnitsHeader({
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, user?.anitsRole]);
 
   const handleMarkAsRead = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -152,7 +155,7 @@ export function AnitsHeader({
       : user?.anitsRole === "FACULTY"
       ? "FACULTY"
       : user?.anitsRole === "HOD"
-      ? "HOD"
+      ? `HOD · ${user?.department || "CSE"}`
       : "ADMIN";
 
   const getInitials = (name?: string) => {
@@ -257,7 +260,11 @@ export function AnitsHeader({
                           key={f.id}
                           onClick={() => {
                             setSearchOpen(false);
-                            navigate({ to: "/anits/faculty" as any, search: { search: f.rollNumber } as any });
+                            if (user?.anitsRole === "HOD") {
+                              navigate({ to: "/anits/attendance" as any, search: { tab: "faculty" } as any });
+                            } else {
+                              navigate({ to: "/anits/faculty" as any, search: { search: f.rollNumber } as any });
+                            }
                           }}
                           className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
                         >
@@ -282,7 +289,11 @@ export function AnitsHeader({
                           key={s.id}
                           onClick={() => {
                             setSearchOpen(false);
-                            navigate({ to: "/anits/students" as any, search: { search: s.rollNumber } as any });
+                            if (user?.anitsRole === "HOD") {
+                              navigate({ to: "/anits/attendance" as any, search: { tab: "student" } as any });
+                            } else {
+                              navigate({ to: "/anits/students" as any, search: { search: s.rollNumber } as any });
+                            }
                           }}
                           className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
                         >

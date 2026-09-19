@@ -18,12 +18,23 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  UserCheck,
+  GraduationCap,
+  User,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 
 // Faculty Attendance Components
 import { AttendanceHeader } from "@/components/dashboard/attendance/attendance-header";
@@ -90,6 +101,7 @@ function AnitsAttendancePage() {
   // =========================================================================
   // ADMIN & INSTITUTION-WIDE ATTENDANCE LEDGER STATE (POSTGRESQL DRIVEN)
   // =========================================================================
+  const hodDept = department || "CSE";
   const [ledgerRecords, setLedgerRecords] = useState<any[]>([]);
   const [ledgerStats, setLedgerStats] = useState({
     total: 0,
@@ -107,7 +119,7 @@ function AnitsAttendancePage() {
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [ledgerStatus, setLedgerStatus] = useState("All");
-  const [ledgerDept, setLedgerDept] = useState(department || "All");
+  const [ledgerDept, setLedgerDept] = useState(isHod ? hodDept : "All");
   const [ledgerTimeframe, setLedgerTimeframe] = useState("all");
   const [departmentsList, setDepartmentsList] = useState<any[]>([]);
 
@@ -119,9 +131,53 @@ function AnitsAttendancePage() {
     pendingSessions: 0,
   });
   const [todayLoading, setTodayLoading] = useState(false);
-  const [todayDeptFilter, setTodayDeptFilter] = useState("All");
+  const [todayDeptFilter, setTodayDeptFilter] = useState(isHod ? hodDept : "All");
   const [todayStatusFilter, setTodayStatusFilter] = useState("ALL");
   const [todaySearch, setTodaySearch] = useState("");
+
+  // =========================================================================
+  // HOD ACTIVE TAB & DATA STATES
+  // =========================================================================
+  const [activeHodTab, setActiveHodTab] = useState<string>(
+    searchParams.tab === "faculty" || searchParams.tab === "student" || searchParams.tab === "sessions"
+      ? searchParams.tab
+      : "ledger"
+  );
+
+  useEffect(() => {
+    if (searchParams.tab) {
+      setActiveHodTab(searchParams.tab);
+    }
+  }, [searchParams.tab]);
+
+  // HOD Faculty Conduction State
+  const [facultyConduction, setFacultyConduction] = useState<any[]>([]);
+  const [facultyConductionSummary, setFacultyConductionSummary] = useState({
+    totalFaculty: 0,
+    totalScheduled: 0,
+    totalConducted: 0,
+    completionRate: "0.0",
+  });
+  const [facultyConductionLoading, setFacultyConductionLoading] = useState(false);
+  const [facultyConductionSearch, setFacultyConductionSearch] = useState("");
+
+  // HOD Student Attendance & Shortage State
+  const [studentAttendanceList, setStudentAttendanceList] = useState<any[]>([]);
+  const [studentAttendanceSummary, setStudentAttendanceSummary] = useState({
+    totalStudents: 0,
+    eligibleCount: 0,
+    shortageCount: 0,
+    averageAttendance: "0.0",
+  });
+  const [studentAttendanceLoading, setStudentAttendanceLoading] = useState(false);
+  const [studentAttendanceSearch, setStudentAttendanceSearch] = useState("");
+  const [studentAttendanceFilter, setStudentAttendanceFilter] = useState("All");
+
+  // Student Drilldown Modal State
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [studentDetail, setStudentDetail] = useState<any | null>(null);
+  const [studentDetailLoading, setStudentDetailLoading] = useState(false);
+  const [isDrilldownOpen, setIsDrilldownOpen] = useState(false);
 
   // Load active departments from PostgreSQL
   useEffect(() => {
@@ -144,12 +200,13 @@ function AnitsAttendancePage() {
         pageSize: 25,
       };
       if (ledgerStatus && ledgerStatus !== "All") params.status = ledgerStatus;
-      if (ledgerDept && ledgerDept !== "All") params.department = ledgerDept;
+      if (!isHod && ledgerDept && ledgerDept !== "All") params.department = ledgerDept;
       if (ledgerSearch.trim()) params.search = ledgerSearch.trim();
       if (ledgerTimeframe && ledgerTimeframe !== "all") params.timeframe = ledgerTimeframe;
 
       try {
-        const res = await api.get("/api/anits/super-admin/attendance", { params });
+        const endpoint = isHod ? "/api/anits/hod/attendance/ledger" : "/api/anits/super-admin/attendance";
+        const res = await api.get(endpoint, { params });
         if (res.data) {
           setLedgerRecords(res.data.data || []);
           if (res.data.statistics) {
@@ -160,7 +217,7 @@ function AnitsAttendancePage() {
           }
         }
       } catch {
-        // Fallback for HOD or legacy routes
+        // Fallback for legacy routes
         const res = await api.get("/api/attendance/ledger", { params });
         if (Array.isArray(res.data)) {
           setLedgerRecords(res.data);
@@ -178,13 +235,14 @@ function AnitsAttendancePage() {
     } finally {
       setLedgerLoading(false);
     }
-  }, [ledgerStatus, ledgerDept, ledgerSearch, ledgerTimeframe]);
+  }, [isHod, ledgerStatus, ledgerDept, ledgerSearch, ledgerTimeframe]);
 
   const fetchTodaySessions = useCallback(async () => {
     try {
       setTodayLoading(true);
       const params: Record<string, any> = {};
-      if (todayDeptFilter && todayDeptFilter !== "All") params.department = todayDeptFilter;
+      const deptFilter = isHod ? hodDept : todayDeptFilter;
+      if (deptFilter && deptFilter !== "All") params.department = deptFilter;
       if (todayStatusFilter && todayStatusFilter !== "ALL") params.status = todayStatusFilter;
       if (todaySearch.trim()) params.search = todaySearch.trim();
 
@@ -200,13 +258,71 @@ function AnitsAttendancePage() {
     } finally {
       setTodayLoading(false);
     }
-  }, [todayDeptFilter, todayStatusFilter, todaySearch]);
+  }, [isHod, hodDept, todayDeptFilter, todayStatusFilter, todaySearch]);
+
+  const fetchFacultyConduction = useCallback(async () => {
+    try {
+      setFacultyConductionLoading(true);
+      const res = await api.get("/api/anits/hod/attendance/faculty-conduction");
+      if (res.data) {
+        setFacultyConduction(res.data.faculty || []);
+        if (res.data.summary) {
+          setFacultyConductionSummary(res.data.summary);
+        }
+      }
+    } catch {
+      toast.error("Failed to load faculty conduction records.");
+    } finally {
+      setFacultyConductionLoading(false);
+    }
+  }, []);
+
+  const fetchStudentAttendanceList = useCallback(async () => {
+    try {
+      setStudentAttendanceLoading(true);
+      const params: Record<string, any> = {};
+      if (studentAttendanceSearch.trim()) params.search = studentAttendanceSearch.trim();
+      if (studentAttendanceFilter && studentAttendanceFilter !== "All") params.status = studentAttendanceFilter;
+
+      const res = await api.get("/api/anits/hod/attendance/students", { params });
+      if (res.data) {
+        setStudentAttendanceList(res.data.students || []);
+        if (res.data.summary) {
+          setStudentAttendanceSummary(res.data.summary);
+        }
+      }
+    } catch {
+      toast.error("Failed to load department student attendance.");
+    } finally {
+      setStudentAttendanceLoading(false);
+    }
+  }, [studentAttendanceSearch, studentAttendanceFilter]);
+
+  const openStudentDetail = async (studentId: string) => {
+    try {
+      setSelectedStudentId(studentId);
+      setIsDrilldownOpen(true);
+      setStudentDetailLoading(true);
+      const res = await api.get(`/api/anits/hod/attendance/student/${studentId}`);
+      if (res.data) {
+        setStudentDetail(res.data);
+      }
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Failed to load student attendance drilldown.");
+      setIsDrilldownOpen(false);
+    } finally {
+      setStudentDetailLoading(false);
+    }
+  };
 
   const handleExportLedgerCSV = async () => {
     try {
       const token = localStorage.getItem("token") || localStorage.getItem("cms_token");
-      const url = new URL("http://localhost:5000/api/anits/super-admin/attendance/export");
-      if (ledgerDept && ledgerDept !== "All") url.searchParams.set("department", ledgerDept);
+      const exportEndpoint = isHod
+        ? "http://localhost:5000/api/anits/hod/attendance/export"
+        : "http://localhost:5000/api/anits/super-admin/attendance/export";
+      const url = new URL(exportEndpoint);
+      if (!isHod && ledgerDept && ledgerDept !== "All") url.searchParams.set("department", ledgerDept);
       if (ledgerStatus && ledgerStatus !== "All") url.searchParams.set("status", ledgerStatus);
       if (ledgerSearch.trim()) url.searchParams.set("search", ledgerSearch.trim());
       if (ledgerTimeframe && ledgerTimeframe !== "all") url.searchParams.set("timeframe", ledgerTimeframe);
@@ -219,7 +335,7 @@ function AnitsAttendancePage() {
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = downloadUrl;
-      a.download = `ANITS_Master_Attendance_Ledger_${new Date().toISOString().split("T")[0]}.csv`;
+      a.download = `ANITS_${isHod ? hodDept : "Master"}_Attendance_Ledger_${new Date().toISOString().split("T")[0]}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -231,10 +347,19 @@ function AnitsAttendancePage() {
   };
 
   const handleRefresh = async () => {
-    if (ledgerLoading || todayLoading) return;
+    if (ledgerLoading || todayLoading || facultyConductionLoading || studentAttendanceLoading) return;
     const toastId = toast.loading("Refreshing ANITS attendance data from PostgreSQL...");
     try {
-      await Promise.all([fetchLedger(pagination.page), fetchTodaySessions()]);
+      if (isHod) {
+        await Promise.all([
+          fetchLedger(pagination.page),
+          fetchTodaySessions(),
+          fetchFacultyConduction(),
+          fetchStudentAttendanceList(),
+        ]);
+      } else {
+        await Promise.all([fetchLedger(pagination.page), fetchTodaySessions()]);
+      }
       toast.dismiss(toastId);
       toast.success("Attendance records synchronized with PostgreSQL.");
     } catch {
@@ -242,6 +367,21 @@ function AnitsAttendancePage() {
       toast.error("Failed to refresh attendance data.");
     }
   };
+
+  // Tab change dynamic loader for HOD
+  useEffect(() => {
+    if (isHod) {
+      if (activeHodTab === "faculty") {
+        fetchFacultyConduction();
+      } else if (activeHodTab === "student") {
+        fetchStudentAttendanceList();
+      } else if (activeHodTab === "sessions") {
+        fetchTodaySessions();
+      } else if (activeHodTab === "ledger") {
+        fetchLedger(pagination.page);
+      }
+    }
+  }, [isHod, activeHodTab, fetchFacultyConduction, fetchStudentAttendanceList, fetchTodaySessions, fetchLedger, pagination.page]);
 
   const handleClearFilters = () => {
     setLedgerSearch("");
@@ -414,12 +554,11 @@ function AnitsAttendancePage() {
       <div className="space-y-6">
         <AttendanceHeader
           academicYear="2026-27"
+          semester="5"
           currentDate={new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "short", day: "numeric" })}
-          onRefresh={fetchFacultyAttendance}
-          isRefreshing={loadingFaculty}
         />
 
-        <StatisticsCards stats={facultyStats} />
+        <StatisticsCards attendanceData={{ stats: facultyStats } as any} />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="bg-card border border-border/60 p-1 rounded-xl">
@@ -461,6 +600,7 @@ function AnitsAttendancePage() {
                   slot={activeFormSlot}
                   students={rosterStudents}
                   onSubmit={handleSubmitAttendance}
+                  onCancel={() => setActiveFormSlot(null)}
                   isSubmitting={isSubmitting}
                 />
               )}
@@ -469,7 +609,7 @@ function AnitsAttendancePage() {
 
           {/* History */}
           <TabsContent value="history" className="space-y-4">
-            <AttendanceHistory />
+            <AttendanceHistory history={[]} isLoading={false} />
           </TabsContent>
 
           {/* Analytics */}
@@ -563,11 +703,12 @@ function AnitsAttendancePage() {
         <StudentAttendanceHistory logs={studentHistory} />
 
         {/* Subject Drawer Modal */}
-        <AttendanceDrawer
-          subject={selectedSubject}
-          open={drawerOpen}
-          onOpenChange={setDrawerOpen}
-        />
+        {drawerOpen && (
+          <AttendanceDrawer
+            subject={selectedSubject}
+            onClose={() => setDrawerOpen(false)}
+          />
+        )}
       </div>
     );
   }
@@ -580,11 +721,20 @@ function AnitsAttendancePage() {
       {/* Header Banner with Action Buttons */}
       <div className="bg-card p-5 rounded-2xl border border-border/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-black text-foreground">
-            {isHod ? `${department || "Department"} Attendance Ledger & Governance` : "ANITS Institutional Attendance Ledger"}
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-black text-foreground">
+              {isHod ? `${hodDept} Attendance Management & Governance` : "ANITS Institutional Attendance Ledger"}
+            </h2>
+            {isHod && (
+              <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/20 font-bold text-xs">
+                HOD &middot; {hodDept}
+              </Badge>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Real-time synchronization with PostgreSQL AttendanceRecord ledger across all academic branches.
+            {isHod
+              ? `Real-time synchronization with PostgreSQL AttendanceRecord ledger for ${hodDept} students, courses, and sessions.`
+              : "Real-time synchronization with PostgreSQL AttendanceRecord ledger across all academic branches."}
           </p>
         </div>
 
@@ -601,23 +751,33 @@ function AnitsAttendancePage() {
             variant="outline"
             size="sm"
             onClick={handleRefresh}
-            disabled={ledgerLoading || todayLoading}
+            disabled={ledgerLoading || todayLoading || facultyConductionLoading || studentAttendanceLoading}
             className="h-9 rounded-xl text-xs font-semibold gap-1.5 bg-card hover:bg-muted/50 border-border/70"
           >
-            <RefreshCw className={`size-3.5 ${ledgerLoading || todayLoading ? "animate-spin" : ""}`} /> Refresh
+            <RefreshCw className={`size-3.5 ${ledgerLoading || todayLoading || facultyConductionLoading || studentAttendanceLoading ? "animate-spin" : ""}`} /> Refresh
           </Button>
         </div>
       </div>
 
-      {/* Tabs: Full Ledger vs Today's Sessions */}
-      <Tabs defaultValue="ledger" className="space-y-4">
-        <TabsList className="bg-card border border-border/60 p-1 rounded-xl">
+      {/* Tabs: Full Ledger vs Today's Sessions vs Faculty Conduction vs Student Attendance */}
+      <Tabs value={activeHodTab} onValueChange={setActiveHodTab} className="space-y-4">
+        <TabsList className="bg-card border border-border/60 p-1 rounded-xl flex flex-wrap h-auto gap-1">
           <TabsTrigger value="ledger" className="rounded-lg text-xs font-semibold gap-1.5">
             <ClipboardCheck className="size-3.5" /> Attendance Ledger ({ledgerStats.total})
           </TabsTrigger>
           <TabsTrigger value="sessions" className="rounded-lg text-xs font-semibold gap-1.5">
             <CalendarCheck className="size-3.5" /> Today's Scheduled Sessions ({todaySummary.totalSessions})
           </TabsTrigger>
+          {isHod && (
+            <>
+              <TabsTrigger value="faculty" className="rounded-lg text-xs font-semibold gap-1.5">
+                <UserCheck className="size-3.5" /> Faculty Attendance ({facultyConductionSummary.totalFaculty})
+              </TabsTrigger>
+              <TabsTrigger value="student" className="rounded-lg text-xs font-semibold gap-1.5">
+                <GraduationCap className="size-3.5" /> Student Attendance ({studentAttendanceSummary.totalStudents})
+              </TabsTrigger>
+            </>
+          )}
         </TabsList>
 
         {/* TAB 1: FULL ATTENDANCE LEDGER */}
@@ -668,7 +828,7 @@ function AnitsAttendancePage() {
               {/* Filters dropdowns & Clear */}
               <div className="flex items-center gap-2 flex-wrap">
                 {/* Department filter */}
-                {isAdmin && (
+                {isAdmin ? (
                   <select
                     value={ledgerDept}
                     onChange={(e) => setLedgerDept(e.target.value)}
@@ -695,7 +855,11 @@ function AnitsAttendancePage() {
                       </>
                     )}
                   </select>
-                )}
+                ) : isHod ? (
+                  <div className="h-8.5 text-xs rounded-lg border border-primary/40 bg-primary/10 px-2.5 flex items-center font-bold text-primary">
+                    {hodDept} Dept
+                  </div>
+                ) : null}
 
                 {/* Status filter */}
                 <select
@@ -896,19 +1060,25 @@ function AnitsAttendancePage() {
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
-                <select
-                  value={todayDeptFilter}
-                  onChange={(e) => setTodayDeptFilter(e.target.value)}
-                  aria-label="Filter Sessions by Department"
-                  className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
-                >
-                  <option value="All">All Departments</option>
-                  {departmentsList.map((d) => (
-                    <option key={d.id} value={d.code}>
-                      {d.code} - {d.name}
-                    </option>
-                  ))}
-                </select>
+                {isAdmin ? (
+                  <select
+                    value={todayDeptFilter}
+                    onChange={(e) => setTodayDeptFilter(e.target.value)}
+                    aria-label="Filter Sessions by Department"
+                    className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="All">All Departments</option>
+                    {departmentsList.map((d) => (
+                      <option key={d.id} value={d.code}>
+                        {d.code} - {d.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : isHod ? (
+                  <div className="h-8.5 text-xs rounded-lg border border-primary/40 bg-primary/10 px-2.5 flex items-center font-bold text-primary">
+                    {hodDept} Dept
+                  </div>
+                ) : null}
 
                 <select
                   value={todayStatusFilter}
@@ -994,7 +1164,464 @@ function AnitsAttendancePage() {
             )}
           </Card>
         </TabsContent>
+
+        {/* TAB 3: HOD FACULTY ATTENDANCE & CONDUCTION AUDIT */}
+        {isHod && (
+          <TabsContent value="faculty" className="space-y-4">
+            {/* Faculty Conduction KPI Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Department Faculty</span>
+                <div className="text-2xl font-black text-foreground mt-1">{facultyConductionSummary.totalFaculty}</div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{hodDept} teaching faculty</p>
+              </Card>
+
+              <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+                <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider">Scheduled Sessions</span>
+                <div className="text-2xl font-black text-blue-600 mt-1">{facultyConductionSummary.totalScheduled}</div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">MasterTimetable allocations</p>
+              </Card>
+
+              <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+                <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Conducted Sessions</span>
+                <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{facultyConductionSummary.totalConducted}</div>
+                <p className="text-[10px] text-emerald-600/80 font-medium mt-0.5">Submitted attendance sessions</p>
+              </Card>
+
+              <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+                <span className="text-[11px] font-bold text-indigo-600 uppercase tracking-wider">Conduction Rate</span>
+                <div className="text-2xl font-black text-indigo-600 mt-1">{facultyConductionSummary.completionRate}%</div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Session conduction ratio</p>
+              </Card>
+            </div>
+
+            {/* Filter Bar */}
+            <Card className="rounded-xl border border-border/60 shadow-xs p-3.5 bg-card">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={facultyConductionSearch}
+                    onChange={(e) => setFacultyConductionSearch(e.target.value)}
+                    placeholder="Filter by faculty name, designation, or subject..."
+                    className="h-8.5 pl-8.5 text-xs bg-muted/30 border-border/60 rounded-lg w-full"
+                  />
+                </div>
+              </div>
+            </Card>
+
+            {/* Faculty Table */}
+            <Card className="rounded-xl border border-border/60 shadow-xs overflow-hidden bg-card">
+              {facultyConductionLoading ? (
+                <div className="p-12 text-center">
+                  <Loader2 className="size-8 animate-spin text-primary mx-auto mb-2" />
+                  <p className="text-xs text-muted-foreground font-semibold">Loading department faculty conduction records...</p>
+                </div>
+              ) : facultyConduction.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">
+                  No faculty members found for {hodDept} department.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-muted/30 border-b border-border/50 text-muted-foreground font-semibold uppercase text-[10px]">
+                      <tr>
+                        <th className="py-3 px-4">Faculty Name</th>
+                        <th className="py-3 px-4">Designation</th>
+                        <th className="py-3 px-4">Assigned Subjects</th>
+                        <th className="py-3 px-3 text-center">Scheduled</th>
+                        <th className="py-3 px-3 text-center">Conducted</th>
+                        <th className="py-3 px-3 text-center">Pending</th>
+                        <th className="py-3 px-4 text-center">Submission Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {facultyConduction
+                        .filter((f) => {
+                          if (!facultyConductionSearch.trim()) return true;
+                          const q = facultyConductionSearch.toLowerCase();
+                          return (
+                            f.facultyName.toLowerCase().includes(q) ||
+                            f.email.toLowerCase().includes(q) ||
+                            f.designation.toLowerCase().includes(q) ||
+                            (f.subjects || []).some((s: string) => s.toLowerCase().includes(q))
+                          );
+                        })
+                        .map((f) => {
+                          const rateNum = parseFloat(f.submissionRate || "0");
+                          return (
+                            <tr key={f.facultyId} className="hover:bg-muted/20 transition-colors">
+                              <td className="py-2.5 px-4">
+                                <div className="font-bold text-foreground">{f.facultyName}</div>
+                                <div className="text-[11px] text-muted-foreground">{f.email}</div>
+                              </td>
+                              <td className="py-2.5 px-4 whitespace-nowrap text-muted-foreground font-medium">
+                                {f.designation}
+                              </td>
+                              <td className="py-2.5 px-4">
+                                <div className="flex flex-wrap gap-1 max-w-md">
+                                  {(f.subjects || []).map((sub: string, i: number) => (
+                                    <Badge key={i} variant="outline" className="text-[10px] bg-muted/40 font-mono">
+                                      {sub}
+                                    </Badge>
+                                  ))}
+                                  {(!f.subjects || f.subjects.length === 0) && (
+                                    <span className="text-muted-foreground text-[11px]">No allocated subjects</span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-bold font-mono text-foreground">
+                                {f.scheduledClasses}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-bold font-mono text-emerald-600">
+                                {f.completedClasses}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-bold font-mono text-amber-600">
+                                {f.pendingClasses}
+                              </td>
+                              <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    rateNum >= 80
+                                      ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[11px] font-bold"
+                                      : rateNum >= 50
+                                      ? "bg-amber-500/10 text-amber-600 border-amber-500/20 text-[11px] font-bold"
+                                      : "bg-rose-500/10 text-rose-600 border-rose-500/20 text-[11px] font-bold"
+                                  }
+                                >
+                                  {f.submissionRate}%
+                                </Badge>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </TabsContent>
+        )}
+
+        {/* TAB 4: HOD STUDENT ATTENDANCE & SHORTAGE AUDIT */}
+        {isHod && (
+          <TabsContent value="student" className="space-y-4">
+            {/* Student Attendance KPI Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Department Students</span>
+                <div className="text-2xl font-black text-foreground mt-1">{studentAttendanceSummary.totalStudents}</div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Enrolled in {hodDept}</p>
+              </Card>
+
+              <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+                <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider">Average Attendance</span>
+                <div className="text-2xl font-black text-blue-600 mt-1">{studentAttendanceSummary.averageAttendance}%</div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Department aggregate rate</p>
+              </Card>
+
+              <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+                <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Eligible Students</span>
+                <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{studentAttendanceSummary.eligibleCount}</div>
+                <p className="text-[10px] text-emerald-600/80 font-medium mt-0.5">&ge;75% Attendance threshold</p>
+              </Card>
+
+              <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+                <span className="text-[11px] font-bold text-rose-600 uppercase tracking-wider">Attendance Shortage</span>
+                <div className="text-2xl font-black text-rose-600 mt-1">{studentAttendanceSummary.shortageCount}</div>
+                <p className="text-[10px] text-rose-600/80 font-medium mt-0.5">&lt;75% Condonation required</p>
+              </Card>
+            </div>
+
+            {/* Filter Bar */}
+            <Card className="rounded-xl border border-border/60 shadow-xs p-3.5 bg-card">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={studentAttendanceSearch}
+                    onChange={(e) => setStudentAttendanceSearch(e.target.value)}
+                    placeholder="Filter by student name or roll number..."
+                    className="h-8.5 pl-8.5 text-xs bg-muted/30 border-border/60 rounded-lg w-full"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    value={studentAttendanceFilter}
+                    onChange={(e) => setStudentAttendanceFilter(e.target.value)}
+                    aria-label="Filter by Eligibility"
+                    className="h-8.5 text-xs rounded-lg border border-border/60 bg-muted/30 px-2.5 text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="All">All Eligibility Statuses</option>
+                    <option value="Eligible">Eligible (&ge;75%)</option>
+                    <option value="Shortage">Attendance Shortage (&lt;75%)</option>
+                  </select>
+                </div>
+              </div>
+            </Card>
+
+            {/* Students Table */}
+            <Card className="rounded-xl border border-border/60 shadow-xs overflow-hidden bg-card">
+              {studentAttendanceLoading ? (
+                <div className="p-12 text-center">
+                  <Loader2 className="size-8 animate-spin text-primary mx-auto mb-2" />
+                  <p className="text-xs text-muted-foreground font-semibold">Loading department student attendance...</p>
+                </div>
+              ) : studentAttendanceList.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">
+                  No students found matching the current search criteria.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-muted/30 border-b border-border/50 text-muted-foreground font-semibold uppercase text-[10px]">
+                      <tr>
+                        <th className="py-3 px-4">Roll Number</th>
+                        <th className="py-3 px-4">Student Name</th>
+                        <th className="py-3 px-3">Sem &amp; Sec</th>
+                        <th className="py-3 px-3 text-center">Total Sessions</th>
+                        <th className="py-3 px-3 text-center">Attended</th>
+                        <th className="py-3 px-3 text-center">Absent</th>
+                        <th className="py-3 px-4 text-center">Attendance Rate</th>
+                        <th className="py-3 px-4 text-center">Eligibility</th>
+                        <th className="py-3 px-4 text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {studentAttendanceList.map((st) => {
+                        const isShortage = st.eligibility === "Shortage";
+                        return (
+                          <tr key={st.id} className="hover:bg-muted/20 transition-colors">
+                            <td className="py-2.5 px-4 font-mono font-bold text-foreground whitespace-nowrap">
+                              {st.rollNo}
+                            </td>
+                            <td className="py-2.5 px-4 font-bold text-foreground">
+                              {st.name}
+                            </td>
+                            <td className="py-2.5 px-3 text-muted-foreground whitespace-nowrap">
+                              Sem {st.semester} ({st.section})
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono font-bold text-foreground">
+                              {st.totalClasses}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-600">
+                              {st.presentClasses + (st.lateClasses || 0)}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono font-bold text-rose-600">
+                              {st.absentClasses}
+                            </td>
+                            <td className="py-2.5 px-4 text-center whitespace-nowrap font-mono font-bold">
+                              <span className={isShortage ? "text-rose-600 font-black" : "text-emerald-600"}>
+                                {st.attendanceRate}%
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                              <Badge
+                                variant="outline"
+                                className={
+                                  isShortage
+                                    ? "bg-rose-500/10 text-rose-600 border-rose-500/20 text-[11px] font-bold"
+                                    : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[11px] font-bold"
+                                }
+                              >
+                                {isShortage ? "Attendance Shortage" : "Eligible"}
+                              </Badge>
+                            </td>
+                            <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openStudentDetail(st.id)}
+                                className="h-7 px-2.5 text-[11px] rounded-lg font-semibold hover:bg-primary/10 hover:text-primary border-border/60"
+                              >
+                                View Details
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
+
+      {/* STUDENT ATTENDANCE DRILLDOWN DIALOG */}
+      <Dialog open={isDrilldownOpen} onOpenChange={setIsDrilldownOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <GraduationCap className="size-5 text-primary" />
+              Student Attendance Details &middot; {studentDetail?.student?.name}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Official attendance ledger drilldown and subject breakdown from PostgreSQL.
+            </DialogDescription>
+          </DialogHeader>
+
+          {studentDetailLoading ? (
+            <div className="p-12 text-center">
+              <Loader2 className="size-8 animate-spin text-primary mx-auto mb-2" />
+              <p className="text-xs text-muted-foreground font-semibold">Loading student records...</p>
+            </div>
+          ) : studentDetail ? (
+            <div className="space-y-4 text-xs">
+              {/* Student Metadata Card */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-xl bg-muted/30 border border-border/60">
+                <div>
+                  <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider">Roll Number</span>
+                  <div className="font-mono font-bold text-foreground text-xs mt-0.5">{studentDetail.student.rollNo}</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider">Department</span>
+                  <div className="font-bold text-foreground text-xs mt-0.5">{studentDetail.student.department}</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider">Semester &amp; Sec</span>
+                  <div className="font-bold text-foreground text-xs mt-0.5">Sem {studentDetail.student.semester} ({studentDetail.student.section})</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider">Eligibility Status</span>
+                  <div className="mt-0.5">
+                    <Badge
+                      variant="outline"
+                      className={
+                        studentDetail.attendanceSummary.status === "Shortage"
+                          ? "bg-rose-500/10 text-rose-600 border-rose-500/20 text-[10px] font-bold"
+                          : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[10px] font-bold"
+                      }
+                    >
+                      {studentDetail.attendanceSummary.status === "Shortage" ? "Attendance Shortage" : "Eligible"}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              {/* Attendance Summary Banner */}
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="p-2.5 rounded-lg border border-border/60 bg-card">
+                  <div className="text-[10px] font-bold text-muted-foreground uppercase">Total Sessions</div>
+                  <div className="text-lg font-black font-mono mt-0.5">{studentDetail.attendanceSummary.totalSessions}</div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-border/60 bg-card">
+                  <div className="text-[10px] font-bold text-emerald-600 uppercase">Attended</div>
+                  <div className="text-lg font-black font-mono text-emerald-600 mt-0.5">{studentDetail.attendanceSummary.attendedSessions}</div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-border/60 bg-card">
+                  <div className="text-[10px] font-bold text-rose-600 uppercase">Absent</div>
+                  <div className="text-lg font-black font-mono text-rose-600 mt-0.5">{studentDetail.attendanceSummary.absentSessions}</div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-border/60 bg-card">
+                  <div className="text-[10px] font-bold text-blue-600 uppercase">Rate %</div>
+                  <div className={`text-lg font-black font-mono mt-0.5 ${
+                    parseFloat(studentDetail.attendanceSummary.attendancePercentage) < 75 ? "text-rose-600" : "text-blue-600"
+                  }`}>
+                    {studentDetail.attendanceSummary.attendancePercentage}%
+                  </div>
+                </div>
+              </div>
+
+              {/* Subject-Wise Breakdown */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Subject-Wise Attendance Breakdown</h4>
+                <div className="rounded-xl border border-border/60 overflow-hidden">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-muted/30 border-b border-border/50 text-muted-foreground font-semibold uppercase text-[10px]">
+                      <tr>
+                        <th className="py-2.5 px-3">Subject / Course</th>
+                        <th className="py-2.5 px-3 text-center">Conducted</th>
+                        <th className="py-2.5 px-3 text-center">Attended</th>
+                        <th className="py-2.5 px-3 text-center">Percentage</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {(studentDetail.subjectWise || []).map((sub: any, idx: number) => {
+                        const pctNum = parseFloat(sub.percentage || "0");
+                        return (
+                          <tr key={idx} className="hover:bg-muted/20">
+                            <td className="py-2 px-3">
+                              <div className="font-bold text-foreground">{sub.courseTitle}</div>
+                              <div className="text-[10px] font-mono text-muted-foreground">{sub.courseCode}</div>
+                            </td>
+                            <td className="py-2 px-3 text-center font-mono font-semibold">{sub.conducted}</td>
+                            <td className="py-2 px-3 text-center font-mono font-semibold text-emerald-600">{sub.attended}</td>
+                            <td className="py-2 px-3 text-center font-mono font-bold">
+                              <span className={pctNum < 75 ? "text-rose-600" : "text-emerald-600"}>
+                                {sub.percentage}%
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {(!studentDetail.subjectWise || studentDetail.subjectWise.length === 0) && (
+                        <tr>
+                          <td colSpan={4} className="py-4 text-center text-muted-foreground">
+                            No subject attendance records found for this student.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Recent Attendance Log */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Recent Attendance History</h4>
+                <div className="rounded-xl border border-border/60 overflow-hidden max-h-48 overflow-y-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-muted/30 border-b border-border/50 text-muted-foreground font-semibold uppercase text-[10px] sticky top-0 bg-muted">
+                      <tr>
+                        <th className="py-2 px-3">Date</th>
+                        <th className="py-2 px-2 text-center">Period</th>
+                        <th className="py-2 px-3">Subject</th>
+                        <th className="py-2 px-3">Faculty</th>
+                        <th className="py-2 px-3 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {(studentDetail.history || []).map((h: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-muted/20">
+                          <td className="py-1.5 px-3 font-mono text-[11px] whitespace-nowrap">{h.date}</td>
+                          <td className="py-1.5 px-2 text-center font-semibold">{h.period}</td>
+                          <td className="py-1.5 px-3 truncate max-w-36">{h.subject}</td>
+                          <td className="py-1.5 px-3 text-muted-foreground truncate max-w-28">{h.faculty}</td>
+                          <td className="py-1.5 px-3 text-center whitespace-nowrap">
+                            <Badge
+                              variant="outline"
+                              className={
+                                h.status === "Present"
+                                  ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-[10px] font-bold"
+                                  : h.status === "Late"
+                                  ? "bg-amber-500/10 text-amber-600 border-amber-500/20 text-[10px] font-bold"
+                                  : "bg-rose-500/10 text-rose-600 border-rose-500/20 text-[10px] font-bold"
+                              }
+                            >
+                              {h.status}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                      {(!studentDetail.history || studentDetail.history.length === 0) && (
+                        <tr>
+                          <td colSpan={5} className="py-4 text-center text-muted-foreground">
+                            No attendance history logs recorded.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
