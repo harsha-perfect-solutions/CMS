@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../../db";
 import { authenticateToken, AuthenticatedRequest } from "../auth/auth.routes";
 import { getMatchingDepartments } from "../attendance/attendance.routes";
+import { AnitsReportsService } from "./anits-reports.service";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "edusuite_super_secret_key_change_me_in_production";
@@ -3214,6 +3215,128 @@ router.delete("/super-admin/students/:id", authenticateToken, async (req: Authen
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message || "Failed to deactivate student." });
+  }
+});
+
+// =========================================================================
+// SECTION 6: ANITS SUPER ADMIN REPORTS & ANALYTICS CENTER
+// =========================================================================
+
+// GET /api/anits/super-admin/reports/overview: Live Dashboard Overview KPIs
+router.get("/super-admin/reports/overview", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const anitsRole = resolveAnitsRole(req.userRole || "");
+    if (anitsRole !== "ANITS_ADMIN") {
+      return res.status(403).json({ error: "Access denied. ANITS Super Admin authorization required." });
+    }
+
+    const overview = await AnitsReportsService.getOverview();
+    return res.json(overview);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to load reports overview." });
+  }
+});
+
+// GET /api/anits/super-admin/reports/data: Live Dynamic Report Data with Server-Side Aggregation
+router.get("/super-admin/reports/data", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const anitsRole = resolveAnitsRole(req.userRole || "");
+    if (anitsRole !== "ANITS_ADMIN") {
+      return res.status(403).json({ error: "Access denied. ANITS Super Admin authorization required." });
+    }
+
+    const category = String(req.query.category || "attendance");
+    const reportType = String(req.query.reportType || "summary");
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+    const limit = Math.max(1, parseInt(String(req.query.limit || "25"), 10));
+
+    const filters = {
+      department: req.query.department ? String(req.query.department).trim() : undefined,
+      semester: req.query.semester ? String(req.query.semester).trim() : undefined,
+      section: req.query.section ? String(req.query.section).trim() : undefined,
+      academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
+      dateFrom: req.query.dateFrom ? String(req.query.dateFrom).trim() : undefined,
+      dateTo: req.query.dateTo ? String(req.query.dateTo).trim() : undefined,
+      studentId: req.query.studentId ? String(req.query.studentId).trim() : undefined,
+      courseCode: req.query.courseCode ? String(req.query.courseCode).trim() : undefined,
+    };
+
+    const result = await AnitsReportsService.getReportData(category, reportType, filters, page, limit);
+    return res.json(result);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to generate report." });
+  }
+});
+
+// GET /api/anits/super-admin/reports/export: Live Filter-Aware CSV Stream
+router.get("/super-admin/reports/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const anitsRole = resolveAnitsRole(req.userRole || "");
+    if (anitsRole !== "ANITS_ADMIN") {
+      return res.status(403).json({ error: "Access denied. ANITS Super Admin authorization required." });
+    }
+
+    const category = String(req.query.category || "attendance");
+    const reportType = String(req.query.reportType || "summary");
+
+    const filters = {
+      department: req.query.department ? String(req.query.department).trim() : undefined,
+      semester: req.query.semester ? String(req.query.semester).trim() : undefined,
+      section: req.query.section ? String(req.query.section).trim() : undefined,
+      academicYear: req.query.academicYear ? String(req.query.academicYear).trim() : undefined,
+      dateFrom: req.query.dateFrom ? String(req.query.dateFrom).trim() : undefined,
+      dateTo: req.query.dateTo ? String(req.query.dateTo).trim() : undefined,
+    };
+
+    const { filename, csvContent } = await AnitsReportsService.generateCSV(category, reportType, filters);
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "REPORT_EXPORTED",
+        module: "Reports",
+        targetEntity: `${category}:${reportType}`,
+        status: "Success",
+      },
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(csvContent);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to export report CSV." });
+  }
+});
+
+// GET /api/anits/super-admin/reports/department-summary/export: Dedicated One-Click Export
+router.get("/super-admin/reports/department-summary/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const anitsRole = resolveAnitsRole(req.userRole || "");
+    if (anitsRole !== "ANITS_ADMIN") {
+      return res.status(403).json({ error: "Access denied. ANITS Super Admin authorization required." });
+    }
+
+    const { filename, csvContent } = await AnitsReportsService.generateCSV("departments", "summary", {});
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.userId,
+        actorName: req.userEmail || "Super Admin",
+        actorRole: "super_admin",
+        action: "REPORT_EXPORTED",
+        module: "Reports",
+        targetEntity: "departments:summary",
+        status: "Success",
+      },
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(csvContent);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to export department summary CSV." });
   }
 });
 
