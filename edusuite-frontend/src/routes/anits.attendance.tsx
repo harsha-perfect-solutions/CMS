@@ -1214,7 +1214,7 @@ function AnitsAttendancePage() {
           <div>
             <h2 className="text-xl font-black text-foreground">My Attendance</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              ANITS Academic Attendance Records &middot; AY 2026-27 &middot; Semester {studentProfile?.semester || 6}
+              ANITS Academic Attendance Records &middot; AY 2026-27 &middot; Semester {studentProfile?.semester || 5}
             </p>
           </div>
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { AttendanceHistoryRecord } from "./types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
+  RotateCcw,
 } from "lucide-react";
 
 interface AttendanceHistoryProps {
@@ -20,21 +21,41 @@ interface AttendanceHistoryProps {
 export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
-  const [modeFilter, setModeFilter] = useState<string>("All");
+  const [subjectFilter, setSubjectFilter] = useState<string>("All");
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
   const [viewType, setViewType] = useState<"table" | "timeline">("table");
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 8;
+  const [itemsPerPage, setItemsPerPage] = useState<number>(25);
 
-  const filteredLogs = logs.filter((log) => {
-    const matchesSearch =
-      log.date.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.subjectCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.subjectName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.facultyName.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === "All" || log.status === statusFilter;
-    const matchesMode = modeFilter === "All" || log.mode === modeFilter;
-    return matchesSearch && matchesStatus && matchesMode;
-  });
+  const availableSubjects = useMemo(() => {
+    const map = new Map<string, string>();
+    logs.forEach((l) => {
+      if (l.subjectCode && !map.has(l.subjectCode)) {
+        map.set(l.subjectCode, l.subjectName || l.subjectCode);
+      }
+    });
+    return Array.from(map.entries()).map(([code, name]) => ({ code, name }));
+  }, [logs]);
+
+  const filteredLogs = useMemo(() => {
+    return logs.filter((log) => {
+      const s = searchTerm.toLowerCase();
+      const matchesSearch =
+        !searchTerm ||
+        log.date.toLowerCase().includes(s) ||
+        log.subjectCode.toLowerCase().includes(s) ||
+        log.subjectName.toLowerCase().includes(s) ||
+        log.facultyName.toLowerCase().includes(s);
+
+      const matchesStatus = statusFilter === "All" || log.status === statusFilter;
+      const matchesSubject = subjectFilter === "All" || log.subjectCode === subjectFilter;
+      const matchesDateFrom = !dateFrom || log.date >= dateFrom;
+      const matchesDateTo = !dateTo || log.date <= dateTo;
+
+      return matchesSearch && matchesStatus && matchesSubject && matchesDateFrom && matchesDateTo;
+    });
+  }, [logs, searchTerm, statusFilter, subjectFilter, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(filteredLogs.length / itemsPerPage) || 1;
   const paginatedLogs = filteredLogs.slice(
@@ -42,57 +63,138 @@ export function AttendanceHistory({ logs }: AttendanceHistoryProps) {
     currentPage * itemsPerPage
   );
 
+  const handleResetFilters = () => {
+    setSearchTerm("");
+    setStatusFilter("All");
+    setSubjectFilter("All");
+    setDateFrom("");
+    setDateTo("");
+    setCurrentPage(1);
+  };
+
+  const hasActiveFilters = Boolean(
+    searchTerm || statusFilter !== "All" || subjectFilter !== "All" || dateFrom || dateTo
+  );
+
   return (
     <div className="space-y-6">
-
       {/* TOOLBAR & FILTERS */}
-      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Clock className="h-4 w-4 text-[#0b193c] dark:text-blue-400" /> Attendance History & Check-in Ledger
-          </h3>
-          <p className="text-xs text-slate-500">Full audit log of classroom check-in timestamps & status</p>
+      <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Clock className="h-4 w-4 text-[#0b193c] dark:text-blue-400" /> Personal Attendance History &amp; Check-in Ledger
+            </h3>
+            <p className="text-xs text-slate-500">
+              Verified classroom check-ins from PostgreSQL &middot; Showing {filteredLogs.length} of {logs.length} sessions
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* VIEW SWITCHER */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+              <button
+                onClick={() => setViewType("table")}
+                title="Table view"
+                className={`p-1.5 rounded-lg text-xs font-semibold ${
+                  viewType === "table"
+                    ? "bg-white dark:bg-slate-900 text-[#0b193c] dark:text-blue-400 shadow-sm"
+                    : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                <List className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setViewType("timeline")}
+                title="Timeline view"
+                className={`p-1.5 rounded-lg text-xs font-semibold ${
+                  viewType === "timeline"
+                    ? "bg-white dark:bg-slate-900 text-[#0b193c] dark:text-blue-400 shadow-sm"
+                    : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                <Layers className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Filter Controls Row */}
+        <div className="flex flex-wrap items-center gap-2.5 pt-1">
           {/* SEARCH */}
-          <div className="relative w-48">
+          <div className="relative w-full sm:w-56">
             <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
             <Input
-              placeholder="Search date or subject..."
+              placeholder="Search subject, faculty, date..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setCurrentPage(1);
+              }}
               className="pl-8 h-8 text-xs rounded-xl"
             />
           </div>
 
+          {/* SUBJECT FILTER */}
+          <select
+            value={subjectFilter}
+            onChange={(e) => {
+              setSubjectFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+            aria-label="Filter by Subject"
+            className="h-8 text-xs px-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 font-medium"
+          >
+            <option value="All">All Subjects ({availableSubjects.length})</option>
+            {availableSubjects.map((s) => (
+              <option key={s.code} value={s.code}>
+                {s.code} - {s.name}
+              </option>
+            ))}
+          </select>
+
           {/* STATUS FILTER */}
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+            aria-label="Filter by Status"
             className="h-8 text-xs px-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 font-medium"
           >
             <option value="All">All Statuses</option>
             <option value="Present">Present</option>
-            <option value="Absent">Absent</option>
             <option value="Late">Late</option>
-            <option value="Medical Leave">Medical Leave</option>
-            <option value="On Duty">On Duty</option>
+            <option value="Absent">Absent</option>
           </select>
 
-          {/* VIEW SWITCHER */}
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-            <button
-              onClick={() => setViewType("timeline")}
-              className={`p-1.5 rounded-lg text-xs font-semibold ${
-                viewType === "timeline"
-                  ? "bg-white dark:bg-slate-900 text-[#0b193c] dark:text-blue-400 shadow-sm"
-                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-              }`}
+          {/* PAGE SIZE SELECTOR */}
+          <select
+            value={String(itemsPerPage)}
+            onChange={(e) => {
+              setItemsPerPage(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+            aria-label="Items per page"
+            className="h-8 text-xs px-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 font-medium"
+          >
+            <option value="25">25 per page</option>
+            <option value="50">50 per page</option>
+            <option value="100">100 per page</option>
+          </select>
+
+          {/* RESET BUTTON */}
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleResetFilters}
+              className="h-8 text-xs font-semibold gap-1 text-slate-500 hover:text-slate-900 dark:hover:text-white px-2"
             >
-              <Layers className="h-3.5 w-3.5" />
-            </button>
-          </div>
+              <RotateCcw className="size-3" /> Reset Filters
+            </Button>
+          )}
         </div>
       </div>
 

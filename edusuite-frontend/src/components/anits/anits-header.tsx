@@ -86,8 +86,14 @@ export function AnitsHeader({
       .catch(() => {});
   }, []);
 
-  // 3. Debounced global search for Super Admin
+  // 3. Debounced global search for Super Admin & HOD
   useEffect(() => {
+    if (user?.anitsRole === "STUDENT") {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
     const q = searchQuery.trim();
     if (q.length < 2) {
       setSearchResults(null);
@@ -148,7 +154,8 @@ export function AnitsHeader({
     navigate({ to: "/anits/login" as any });
   };
 
-  const displayName = user?.name || (user?.anitsRole === "STUDENT" ? "K. Sai Teja (Student)" : "Administrator");
+  const rawDisplayName = user?.name || (user?.anitsRole === "STUDENT" ? "K. Sai Teja" : "Administrator");
+  const displayName = rawDisplayName.replace(/\s*\(Student\)$/i, "").trim();
   const roleLabel =
     user?.anitsRole === "STUDENT"
       ? "STUDENT"
@@ -185,132 +192,134 @@ export function AnitsHeader({
           <span className="sr-only">Toggle Sidebar</span>
         </Button>
 
-        {/* Global Search Input with Real Database Results Dropdown */}
-        <div className="relative hidden sm:block min-w-0">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onFocus={() => {
-              if (searchQuery.trim().length >= 2) setSearchOpen(true);
-            }}
-            placeholder="Search students, staff, departments..."
-            className="h-8.5 w-52 md:w-72 lg:w-84 pl-8.5 pr-3 text-xs bg-muted/30 border-border/60 rounded-md focus-visible:ring-1 focus-visible:ring-blue-500/40"
-          />
+        {/* Global Search Input with Real Database Results Dropdown (Admin & HOD only) */}
+        {user?.anitsRole !== "STUDENT" && (
+          <div className="relative hidden sm:block min-w-0">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => {
+                if (searchQuery.trim().length >= 2) setSearchOpen(true);
+              }}
+              placeholder="Search students, staff, departments..."
+              className="h-8.5 w-52 md:w-72 lg:w-84 pl-8.5 pr-3 text-xs bg-muted/30 border-border/60 rounded-md focus-visible:ring-1 focus-visible:ring-blue-500/40"
+            />
 
-          {/* Live Search Results Popover/Dropdown */}
-          {searchOpen && searchQuery.trim().length >= 2 && (
-            <>
-              <div
-                className="fixed inset-0 z-40"
-                onClick={() => setSearchOpen(false)}
-              />
-              <div className="absolute left-0 top-10 z-50 w-80 md:w-96 rounded-xl border border-border/60 bg-popover shadow-xl overflow-hidden divide-y divide-border/40 text-xs">
-                <div className="p-2.5 bg-muted/30 flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                    ANITS Database Search
-                  </span>
-                  {isSearching && (
-                    <span className="text-[10px] text-primary font-medium animate-pulse">
-                      Searching...
+            {/* Live Search Results Popover/Dropdown */}
+            {searchOpen && searchQuery.trim().length >= 2 && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setSearchOpen(false)}
+                />
+                <div className="absolute left-0 top-10 z-50 w-80 md:w-96 rounded-xl border border-border/60 bg-popover shadow-xl overflow-hidden divide-y divide-border/40 text-xs">
+                  <div className="p-2.5 bg-muted/30 flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                      ANITS Database Search
                     </span>
-                  )}
+                    {isSearching && (
+                      <span className="text-[10px] text-primary font-medium animate-pulse">
+                        Searching...
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto p-1.5 space-y-2">
+                    {totalResultsCount === 0 && !isSearching && (
+                      <div className="p-4 text-center text-xs text-muted-foreground">
+                        No matching records found for "{searchQuery}".
+                      </div>
+                    )}
+
+                    {/* Departments */}
+                    {searchResults?.departments && searchResults.departments.length > 0 && (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase">
+                          Departments
+                        </div>
+                        {searchResults.departments.map((d) => (
+                          <div
+                            key={d.id}
+                            onClick={() => {
+                              setSearchOpen(false);
+                              navigate({ to: "/anits/timetable" as any });
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
+                          >
+                            <div>
+                              <p className="font-bold text-foreground text-xs">{d.name}</p>
+                              <p className="text-[10px] text-muted-foreground">Code: {d.code} &middot; HOD: {d.hodName || "Assigned"}</p>
+                            </div>
+                            <Badge variant="outline" className="text-[9px]">Dept</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Faculty */}
+                    {searchResults?.faculty && searchResults.faculty.length > 0 && (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase">
+                          Faculty &amp; Staff
+                        </div>
+                        {searchResults.faculty.map((f) => (
+                          <div
+                            key={f.id}
+                            onClick={() => {
+                              setSearchOpen(false);
+                              if (user?.anitsRole === "HOD") {
+                                navigate({ to: "/anits/attendance" as any, search: { tab: "faculty" } as any });
+                              } else {
+                                navigate({ to: "/anits/faculty" as any, search: { search: f.rollNumber } as any });
+                              }
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
+                          >
+                            <div>
+                              <p className="font-bold text-foreground text-xs">{f.name}</p>
+                              <p className="text-[10px] text-muted-foreground">{f.rollNumber} &middot; {f.department || "General"}</p>
+                            </div>
+                            <Badge variant="outline" className="text-[9px] bg-blue-500/10 text-blue-600">Faculty</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Students */}
+                    {searchResults?.students && searchResults.students.length > 0 && (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase">
+                          Students
+                        </div>
+                        {searchResults.students.map((s) => (
+                          <div
+                            key={s.id}
+                            onClick={() => {
+                              setSearchOpen(false);
+                              if (user?.anitsRole === "HOD") {
+                                navigate({ to: "/anits/attendance" as any, search: { tab: "student" } as any });
+                              } else {
+                                navigate({ to: "/anits/students" as any, search: { search: s.rollNumber } as any });
+                              }
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
+                          >
+                            <div>
+                              <p className="font-bold text-foreground text-xs">{s.name}</p>
+                              <p className="text-[10px] text-muted-foreground">{s.rollNumber} &middot; {s.department} Sem {s.semester || 1} ({s.section || "A"})</p>
+                            </div>
+                            <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-600">Student</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-
-                <div className="max-h-72 overflow-y-auto p-1.5 space-y-2">
-                  {totalResultsCount === 0 && !isSearching && (
-                    <div className="p-4 text-center text-xs text-muted-foreground">
-                      No matching records found for "{searchQuery}".
-                    </div>
-                  )}
-
-                  {/* Departments */}
-                  {searchResults?.departments && searchResults.departments.length > 0 && (
-                    <div>
-                      <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase">
-                        Departments
-                      </div>
-                      {searchResults.departments.map((d) => (
-                        <div
-                          key={d.id}
-                          onClick={() => {
-                            setSearchOpen(false);
-                            navigate({ to: "/anits/timetable" as any });
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
-                        >
-                          <div>
-                            <p className="font-bold text-foreground text-xs">{d.name}</p>
-                            <p className="text-[10px] text-muted-foreground">Code: {d.code} &middot; HOD: {d.hodName || "Assigned"}</p>
-                          </div>
-                          <Badge variant="outline" className="text-[9px]">Dept</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Faculty */}
-                  {searchResults?.faculty && searchResults.faculty.length > 0 && (
-                    <div>
-                      <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase">
-                        Faculty &amp; Staff
-                      </div>
-                      {searchResults.faculty.map((f) => (
-                        <div
-                          key={f.id}
-                          onClick={() => {
-                            setSearchOpen(false);
-                            if (user?.anitsRole === "HOD") {
-                              navigate({ to: "/anits/attendance" as any, search: { tab: "faculty" } as any });
-                            } else {
-                              navigate({ to: "/anits/faculty" as any, search: { search: f.rollNumber } as any });
-                            }
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
-                        >
-                          <div>
-                            <p className="font-bold text-foreground text-xs">{f.name}</p>
-                            <p className="text-[10px] text-muted-foreground">{f.rollNumber} &middot; {f.department || "General"}</p>
-                          </div>
-                          <Badge variant="outline" className="text-[9px] bg-blue-500/10 text-blue-600">Faculty</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Students */}
-                  {searchResults?.students && searchResults.students.length > 0 && (
-                    <div>
-                      <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase">
-                        Students
-                      </div>
-                      {searchResults.students.map((s) => (
-                        <div
-                          key={s.id}
-                          onClick={() => {
-                            setSearchOpen(false);
-                            if (user?.anitsRole === "HOD") {
-                              navigate({ to: "/anits/attendance" as any, search: { tab: "student" } as any });
-                            } else {
-                              navigate({ to: "/anits/students" as any, search: { search: s.rollNumber } as any });
-                            }
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg hover:bg-muted/50 cursor-pointer flex items-center justify-between"
-                        >
-                          <div>
-                            <p className="font-bold text-foreground text-xs">{s.name}</p>
-                            <p className="text-[10px] text-muted-foreground">{s.rollNumber} &middot; {s.department} Sem {s.semester || 1} ({s.section || "A"})</p>
-                          </div>
-                          <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-600">Student</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* RIGHT: ACADEMIC YEAR, NOTIFICATION BELL, USER CHIP */}

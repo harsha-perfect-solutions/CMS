@@ -672,7 +672,8 @@ function AnitsDashboardPage() {
   const getRoleDisplayName = () => {
     if (role === "ANITS_ADMIN") return data?.identity?.name || "Administrator";
     if (role === "FACULTY") return data?.faculty?.name || "Faculty";
-    return `${data?.student?.name || "K. Sai Teja"} (Student)`;
+    const rawName = data?.student?.name || "K. Sai Teja";
+    return rawName.replace(/\s*\(Student\)$/i, "").trim();
   };
 
   const displayRoleBadge = () => {
@@ -692,6 +693,11 @@ function AnitsDashboardPage() {
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-muted text-muted-foreground">
               {displayRoleBadge()}
             </span>
+            {role === "STUDENT" && data?.student && (
+              <span className="text-[11px] font-semibold text-muted-foreground bg-muted/60 px-2.5 py-0.5 rounded-md">
+                Roll: {data.student.rollNumber} &middot; {data.student.department} Sem {data.student.semester} ({data.student.section})
+              </span>
+            )}
             {data?.identity?.adminId && (
               <span className="text-[11px] font-semibold text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-md">
                 ID: {data.identity.adminId}
@@ -751,81 +757,138 @@ function AnitsDashboardPage() {
 
       {/* STUDENT DASHBOARD METRIC CARDS */}
       {role === "STUDENT" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
-          <Card className="rounded-xl border border-border/60 shadow-xs bg-card hover:shadow-sm transition-shadow">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground">Overall Attendance</span>
-                <div className="size-8 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 flex items-center justify-center">
-                  <TrendingUp className="size-4" />
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
+            <Card className="rounded-xl border border-border/60 shadow-xs bg-card hover:shadow-sm transition-shadow">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground">Overall Attendance</span>
+                  <div className="size-8 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 flex items-center justify-center">
+                    <TrendingUp className="size-4" />
+                  </div>
                 </div>
-              </div>
-              <div className="text-3xl font-black text-foreground mt-3">
-                {m.overallPercentage ?? 0}%
-              </div>
-              <p className="text-xs text-muted-foreground mt-1.5">
-                Required ANITS threshold: <span className="font-semibold text-foreground">75%</span>
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-xl border border-border/60 shadow-xs bg-card hover:shadow-sm transition-shadow">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground">Total Classes Conducted</span>
-                <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center">
-                  <BookOpen className="size-4" />
+                <div className="text-3xl font-black text-foreground mt-3">
+                  {m.overallPercentage ?? 0}%
                 </div>
-              </div>
-              <div className="text-3xl font-black text-foreground mt-3">
-                {m.totalConducted ?? 0}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1.5">
-                PostgreSQL AttendanceRecord ledger
-              </p>
-            </CardContent>
-          </Card>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  Required ANITS threshold: <span className="font-semibold text-foreground">75%</span>
+                </p>
+              </CardContent>
+            </Card>
 
-          <Card className="rounded-xl border border-border/60 shadow-xs bg-card hover:shadow-sm transition-shadow">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground">Present / Late / Absent</span>
-                <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center">
-                  <ClipboardCheck className="size-4" />
+            <Card className="rounded-xl border border-border/60 shadow-xs bg-card hover:shadow-sm transition-shadow">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground">Total Classes Conducted</span>
+                  <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center">
+                    <BookOpen className="size-4" />
+                  </div>
                 </div>
-              </div>
-              <div className="text-3xl font-black text-foreground mt-3">
-                {m.presentCount ?? 0} <span className="text-xl font-normal text-muted-foreground/60">/</span> {m.lateCount ?? 0} <span className="text-xl font-normal text-muted-foreground/60">/</span> {m.absentCount ?? 0}
-              </div>
-              <p className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold mt-1.5">
-                Attended: {(m.presentCount ?? 0) + (m.lateCount ?? 0)} sessions
-              </p>
-            </CardContent>
-          </Card>
+                <div className="text-3xl font-black text-foreground mt-3">
+                  {m.totalConducted ?? 0}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  PostgreSQL AttendanceRecord ledger
+                </p>
+              </CardContent>
+            </Card>
 
-          <Card className="rounded-xl border border-border/60 shadow-xs bg-card hover:shadow-sm transition-shadow">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground">Shortage Alerts</span>
-                <div className={`size-8 rounded-full flex items-center justify-center ${
-                  (m.lowAttendanceCount ?? 0) > 0
-                    ? "bg-rose-100 dark:bg-rose-950/50 text-rose-600"
-                    : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+            <Card className="rounded-xl border border-border/60 shadow-xs bg-card hover:shadow-sm transition-shadow">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground">Present / Late / Absent</span>
+                  <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center">
+                    <ClipboardCheck className="size-4" />
+                  </div>
+                </div>
+                <div className="text-3xl font-black text-foreground mt-3">
+                  {m.presentCount ?? 0} <span className="text-xl font-normal text-muted-foreground/60">/</span> {m.lateCount ?? 0} <span className="text-xl font-normal text-muted-foreground/60">/</span> {m.absentCount ?? 0}
+                </div>
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold mt-1.5">
+                  Attended: {(m.presentCount ?? 0) + (m.lateCount ?? 0)} sessions
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-xl border border-border/60 shadow-xs bg-card hover:shadow-sm transition-shadow">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground">Shortage Alerts</span>
+                  <div className={`size-8 rounded-full flex items-center justify-center ${
+                    (m.lowAttendanceCount ?? 0) > 0
+                      ? "bg-rose-100 dark:bg-rose-950/50 text-rose-600"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                  }`}>
+                    <AlertTriangle className="size-4" />
+                  </div>
+                </div>
+                <div className={`text-3xl font-black mt-3 ${
+                  (m.lowAttendanceCount ?? 0) > 0 ? "text-rose-600" : "text-foreground"
                 }`}>
-                  <AlertTriangle className="size-4" />
+                  {m.lowAttendanceCount ?? 0}
                 </div>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  {(m.lowAttendanceCount ?? 0) > 0 ? "Subjects below 75% threshold" : "All subjects eligible"}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* TODAY'S CLASSES FOR STUDENT */}
+          <Card className="rounded-xl border border-border/60 shadow-xs bg-card">
+            <CardHeader className="p-5 border-b border-border/40 flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-sm font-bold flex items-center gap-2">
+                  <Calendar className="size-4 text-blue-600" /> Today's Classes
+                </CardTitle>
+                <CardDescription className="text-xs mt-0.5">
+                  Scheduled classes for {data?.day || "Today"} ({data?.date}) &middot; Section {data?.student?.section || "A"}
+                </CardDescription>
               </div>
-              <div className={`text-3xl font-black mt-3 ${
-                (m.lowAttendanceCount ?? 0) > 0 ? "text-rose-600" : "text-foreground"
-              }`}>
-                {m.lowAttendanceCount ?? 0}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1.5">
-                {(m.lowAttendanceCount ?? 0) > 0 ? "Subjects below 75% threshold" : "All subjects eligible"}
-              </p>
+              <Button asChild size="sm" variant="ghost" className="text-xs font-semibold gap-1 text-primary">
+                <Link to="/anits/timetable">View Full Timetable &rarr;</Link>
+              </Button>
+            </CardHeader>
+            <CardContent className="p-0">
+              {!data?.todaySchedule || data.todaySchedule.length === 0 ? (
+                <div className="p-8 text-center text-xs text-muted-foreground">
+                  No classes scheduled for your section today ({data?.day}).
+                </div>
+              ) : (
+                <div className="divide-y divide-border/40">
+                  {data.todaySchedule.map((c: any) => (
+                    <div key={c.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/20 transition-colors">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-sm text-foreground">{c.subject}</span>
+                          {c.isLab && <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary">Lab</Badge>}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Period {c.periodNumber} &middot; {c.time} &middot; Faculty: <span className="font-medium text-foreground">{c.faculty}</span> &middot; Room: <span className="font-medium text-foreground">{c.roomNo}</span>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className={
+                            c.status === "Completed"
+                              ? "bg-slate-500/10 text-slate-600 border-slate-500/20 text-xs py-0.5"
+                              : c.status === "Ongoing"
+                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-xs py-0.5 font-bold animate-pulse"
+                              : "bg-blue-500/10 text-blue-600 border-blue-500/20 text-xs py-0.5"
+                          }
+                        >
+                          {c.status}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
-        </div>
+        </>
       )}
 
       {/* FACULTY DASHBOARD METRICS */}

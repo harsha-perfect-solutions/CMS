@@ -369,6 +369,8 @@ router.get(["/profile", "/me"], authenticateToken, async (req: AuthenticatedRequ
       creditsEarned: user.creditsEarned || null,
       avatarUrl: user.avatarUrl || user.profilePhoto || null,
       section: user.section || null,
+      status: user.status || "Active",
+      academicYear: "2026-27",
       flags,
       dashboard: dashboardRoute,
     });

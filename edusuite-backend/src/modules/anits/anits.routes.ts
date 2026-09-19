@@ -1064,25 +1064,37 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
     }
 
     if (anitsRole === "STUDENT") {
-      let student = await prisma.student.findUnique({
+      const student = await prisma.student.findUnique({
         where: { id: authUserId },
-        select: { id: true, name: true, rollNumber: true, department: true, semester: true, section: true },
+        select: {
+          id: true,
+          name: true,
+          rollNumber: true,
+          email: true,
+          department: true,
+          semester: true,
+          section: true,
+          year: true,
+          status: true,
+          cgpa: true,
+          creditsEarned: true,
+        },
       });
 
       if (!student) {
-        student = await prisma.student.findFirst({
-          select: { id: true, name: true, rollNumber: true, department: true, semester: true, section: true },
-        });
-      }
-
-      if (!student) {
-        return res.status(404).json({ error: "Student profile not found." });
+        return res.status(404).json({ error: "Authenticated student profile not found in database." });
       }
 
       const targetStudentId = student.id;
       const cleanSec = (student.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
 
-      const [todayTimetable, studentRecords] = await Promise.all([
+      const latestTimetable = await prisma.masterTimetable.findFirst({
+        select: { academicYear: true },
+        orderBy: { updatedAt: "desc" },
+      });
+      const academicYear = latestTimetable?.academicYear || "2026-27";
+
+      const [todayTimetable, studentRecords, unreadNotificationsCount] = await Promise.all([
         prisma.masterTimetable.findMany({
           where: {
             branch: { equals: student.department || "CSE", mode: "insensitive" },
@@ -1095,8 +1107,11 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
         }),
         prisma.attendanceRecord.findMany({
           where: { userId: targetStudentId },
-          include: { course: true, faculty: true },
-          orderBy: { date: "desc" },
+          include: { course: true, faculty: true, timetable: { include: { course: true, faculty: true } } },
+          orderBy: [{ date: "desc" }, { periodNumber: "desc" }],
+        }),
+        prisma.notification.count({
+          where: { studentId: targetStudentId, isRead: false },
         }),
       ]);
 
@@ -1107,61 +1122,164 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
       const attendedCount = presentCount + lateCount;
       const overallPercentage = totalConducted > 0 ? Number(((attendedCount / totalConducted) * 100).toFixed(1)) : 0;
 
-      // Subject-wise grouping for alerts
-      const courseMap = new Map<string, { name: string; code: string; conducted: number; present: number; late: number }>();
+      // Subject-wise grouping for alerts and breakdown
+      const courseMap = new Map<string, {
+        courseId: string;
+        name: string;
+        code: string;
+        faculty: string;
+        conducted: number;
+        present: number;
+        late: number;
+        absent: number;
+        attended: number;
+        percentage: number;
+      }>();
+
       studentRecords.forEach((r) => {
-        const cKey = r.courseId || "unknown";
+        const cObj = r.timetable?.course || r.course;
+        const cKey = cObj?.code || r.courseId || "UNKNOWN";
+        const cName = cObj?.name || "Subject";
+        const facultyName = r.timetable?.faculty?.name || r.faculty?.name || "Faculty not assigned";
+
         if (!courseMap.has(cKey)) {
           courseMap.set(cKey, {
-            name: r.course?.name || "Subject",
-            code: r.course?.code || "",
+            courseId: cObj?.id || r.courseId || cKey,
+            code: cKey,
+            name: cName,
+            faculty: facultyName,
             conducted: 0,
             present: 0,
             late: 0,
+            absent: 0,
+            attended: 0,
+            percentage: 0,
           });
         }
         const item = courseMap.get(cKey)!;
         item.conducted++;
-        if (r.status === "Present") item.present++;
-        if (r.status === "Late") item.late++;
+        if (r.status === "Present") {
+          item.present++;
+          item.attended++;
+        } else if (r.status === "Late") {
+          item.late++;
+          item.attended++;
+        } else if (r.status === "Absent") {
+          item.absent++;
+        }
       });
 
       let lowAttendanceCount = 0;
-      courseMap.forEach((c) => {
-        const pct = c.conducted > 0 ? ((c.present + c.late) / c.conducted) * 100 : 0;
+      const subjectBreakdown = Array.from(courseMap.values()).map((c) => {
+        const pct = c.conducted > 0 ? Number(((c.attended / c.conducted) * 100).toFixed(1)) : 0;
+        c.percentage = pct;
         if (pct < 75.0) lowAttendanceCount++;
+        return {
+          ...c,
+          percentage: pct,
+          isShortage: pct < 75.0,
+          thresholdStatus: pct < 75.0 ? "Shortage" : "Eligible",
+          status: pct < 75.0 ? "Shortage" : "Eligible",
+          requiredPercentage: 75.0,
+        };
       });
+
+      // Parse current time in Asia/Kolkata for dynamic class status calculation
+      const [curHour, curMin] = new Intl.DateTimeFormat("en-GB", {
+        hour: "numeric",
+        minute: "numeric",
+        hour12: false,
+        timeZone: "Asia/Kolkata",
+      }).format(now).split(":").map(Number);
+      const curMins = curHour * 60 + (curMin || 0);
+
+      const parseTimeToMins = (tStr: string): number => {
+        if (!tStr) return 0;
+        const match = tStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+        if (!match) return 0;
+        let hrs = parseInt(match[1], 10);
+        const mins = parseInt(match[2], 10);
+        const ampm = match[3]?.toUpperCase();
+        if (ampm === "PM" && hrs < 12) hrs += 12;
+        if (ampm === "AM" && hrs === 12) hrs = 0;
+        return hrs * 60 + mins;
+      };
+
+      const processedTodayClasses = todayTimetable.map((t) => {
+        const startMins = parseTimeToMins(t.startTime);
+        const endMins = parseTimeToMins(t.endTime);
+        let classStatus: "Upcoming" | "Ongoing" | "Completed" = "Upcoming";
+        if (curMins >= endMins) {
+          classStatus = "Completed";
+        } else if (curMins >= startMins && curMins < endMins) {
+          classStatus = "Ongoing";
+        }
+
+        return {
+          id: t.id,
+          periodNumber: t.periodNumber,
+          startTime: t.startTime,
+          endTime: t.endTime,
+          time: `${t.startTime} - ${t.endTime}`,
+          courseCode: t.course?.code || "",
+          courseName: t.course?.name || "Lecture Session",
+          subject: t.course ? `${t.course.code} - ${t.course.name}` : "Lecture Session",
+          faculty: t.faculty?.name || "Faculty not assigned",
+          roomNo: t.roomNo || "Room not assigned",
+          isLab: t.isLab,
+          status: classStatus,
+        };
+      });
+
+      const studentProfile = {
+        id: student.id,
+        name: student.name,
+        rollNumber: student.rollNumber,
+        email: student.email,
+        department: student.department,
+        semester: student.semester,
+        section: student.section,
+        year: student.year,
+        status: student.status,
+        cgpa: student.cgpa,
+        creditsEarned: student.creditsEarned,
+      };
 
       return res.json({
         anitsRole,
-        student,
-        academicYear: "2026-27",
+        role: anitsRole,
+        student: studentProfile,
+        user: studentProfile,
+        academicYear,
         date: today,
         day: dayName,
+        unreadNotificationsCount,
         metrics: {
           totalConducted,
           presentCount,
           lateCount,
           absentCount,
+          attendedCount,
           overallPercentage,
           lowAttendanceCount,
         },
-        todaySchedule: todayTimetable.map((t) => ({
-          id: t.id,
-          periodNumber: t.periodNumber,
-          time: `${t.startTime} - ${t.endTime}`,
-          subject: t.course ? `${t.course.code} - ${t.course.name}` : "Lecture",
-          faculty: t.faculty?.name || "Faculty Member",
-          roomNo: t.roomNo || "LH-101",
-        })),
-        recentAttendance: studentRecords.slice(0, 5).map((r) => ({
-          id: r.id,
-          date: r.date,
-          periodNumber: r.periodNumber,
-          subject: r.course ? `${r.course.code} - ${r.course.name}` : "Course",
-          faculty: r.faculty?.name || "Faculty information unavailable",
-          status: r.status,
-        })),
+        subjectBreakdown,
+        todayClasses: processedTodayClasses,
+        todaySchedule: processedTodayClasses,
+        recentAttendance: studentRecords.slice(0, 5).map((r) => {
+          const cObj = r.timetable?.course || r.course;
+          return {
+            id: r.id,
+            date: r.date,
+            periodNumber: r.periodNumber,
+            subject: cObj ? `${cObj.code} - ${cObj.name}` : "Course",
+            subjectCode: cObj?.code || "",
+            subjectName: cObj?.name || "Course",
+            faculty: r.timetable?.faculty?.name || r.faculty?.name || "Faculty not assigned",
+            room: r.timetable?.roomNo || "Room not assigned",
+            status: r.status,
+          };
+        }),
       });
     }
 

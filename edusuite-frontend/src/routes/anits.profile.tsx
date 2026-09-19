@@ -89,7 +89,9 @@ function AnitsProfilePage() {
           <CardContent className="p-5 space-y-4 text-xs">
             <div>
               <span className="text-muted-foreground font-semibold">Full Name</span>
-              <p className="text-foreground font-bold text-sm mt-0.5">{profile?.name || "ANITS Member"}</p>
+              <p className="text-foreground font-bold text-sm mt-0.5">
+                {(profile?.name || "").replace(/\s*\(Student\)$/i, "").trim() || "ANITS Member"}
+              </p>
             </div>
             <div>
               <span className="text-muted-foreground font-semibold">Email Address</span>
@@ -107,14 +109,56 @@ function AnitsProfilePage() {
                 <p className="text-foreground font-bold mt-0.5">{profile?.department || "General"}</p>
               </div>
             </div>
-            <div>
-              <span className="text-muted-foreground font-semibold">Authorized Role</span>
-              <div className="mt-1">
-                <Badge variant="secondary" className="text-xs font-bold uppercase tracking-wider py-0.5 px-2">
-                  {profile?.role || "STUDENT"}
-                </Badge>
+
+            {/* Academic Context for Students */}
+            {profile?.semester && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-muted-foreground font-semibold">Semester &amp; Section</span>
+                  <p className="text-foreground font-bold mt-0.5">
+                    Semester {profile.semester} ({profile.section || "A"})
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground font-semibold">Academic Year</span>
+                  <p className="text-foreground font-bold mt-0.5">{profile?.academicYear || "2026-27"}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <span className="text-muted-foreground font-semibold">Authorized Role</span>
+                <div className="mt-1">
+                  <Badge variant="secondary" className="text-xs font-bold uppercase tracking-wider py-0.5 px-2">
+                    {profile?.role || "STUDENT"}
+                  </Badge>
+                </div>
+              </div>
+              <div>
+                <span className="text-muted-foreground font-semibold">Account Status</span>
+                <div className="mt-1">
+                  <Badge variant="outline" className="text-xs font-bold bg-emerald-500/10 text-emerald-600 border-emerald-500/20 py-0.5 px-2">
+                    {profile?.status || "Active"}
+                  </Badge>
+                </div>
               </div>
             </div>
+
+            {profile?.cgpa && (
+              <div className="p-3 bg-muted/30 rounded-lg flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Cumulative GPA</span>
+                  <p className="text-sm font-black font-mono text-foreground">{profile.cgpa}</p>
+                </div>
+                {profile?.creditsEarned && (
+                  <div className="text-right">
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground">Credits Earned</span>
+                    <p className="text-sm font-black font-mono text-foreground">{profile.creditsEarned} pts</p>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 

@@ -967,6 +967,12 @@ router.get(["/export", "/faculty/export", "/student/export"], authenticateToken,
 
     // Strict role scoping
     if (authRole === "student") {
+      const spoofedId = (req.query.studentId || req.query.userId || req.body?.studentId || req.body?.userId) as string;
+      if (spoofedId && spoofedId !== authUserId) {
+        return res.status(403).json({
+          error: "Access denied. Students are not authorized to export another student's attendance records.",
+        });
+      }
       // Students can ONLY export their own attendance records
       where.userId = authUserId;
     } else if (authRole === "faculty") {
@@ -1034,9 +1040,9 @@ router.get(["/export", "/faculty/export", "/student/export"], authenticateToken,
         Date: r.date,
         Subject: r.timetable?.course?.name || r.course?.name || "Subject",
         CourseCode: r.timetable?.course?.code || r.course?.code || "",
-        Faculty: r.timetable?.faculty?.name || r.faculty?.name || "Faculty information unavailable",
+        Faculty: r.timetable?.faculty?.name || r.faculty?.name || "Faculty not assigned",
         Period: `Period ${r.periodNumber || 1}`,
-        Room: r.timetable?.roomNo || "Room 101",
+        Room: r.timetable?.roomNo || "Room not assigned",
         Status: r.status,
       }));
 
@@ -2252,7 +2258,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
     let targetStudentId = authUserId;
 
     if (authRole === "student") {
-      const spoofedId = req.query.studentId as string;
+      const spoofedId = (req.query.studentId || req.query.userId || req.body?.studentId || req.body?.userId) as string;
       if (spoofedId && spoofedId !== authUserId) {
         return res.status(403).json({
           error: "Access denied. Students are not authorized to view another student's attendance records.",
@@ -2397,7 +2403,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         subjectCode: courseKey,
         subjectName: courseName,
         facultyName,
-        room: r.timetable?.roomNo || "Room 101",
+        room: r.timetable?.roomNo || "Room not assigned",
         status: r.status,
         mode: "Manual",
         remarks: r.remarks || "Regular Session Attendance",
@@ -2483,8 +2489,8 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         timeSlot: r.timetable ? `${r.timetable.startTime || "09:00 AM"} - ${r.timetable.endTime || "10:00 AM"}` : "Scheduled Session",
         subjectCode: courseObj?.code || r.courseId || "SUB",
         subjectName: courseObj?.name || "Department Course",
-        facultyName: r.timetable?.faculty?.name || r.faculty?.name || "Faculty information unavailable",
-        room: r.timetable?.roomNo || "Room 101",
+        facultyName: r.timetable?.faculty?.name || r.faculty?.name || "Faculty not assigned",
+        room: r.timetable?.roomNo || "Room not assigned",
         status: r.status as "Present" | "Absent" | "Late" | "Medical Leave" | "On Duty" | "Holiday",
         mode: "Manual" as const,
         remarks: r.remarks || "Regular Session Attendance",
@@ -2521,6 +2527,11 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       lowAttendanceCount: displayedSubjects.filter((s) => s.attendancePct < 75).length,
     };
 
+    const shortageSubjects = displayedSubjects.filter((s) => s.attendancePct < 75);
+    const alerts = shortageSubjects.map(
+      (s) => `${s.subjectCode} - ${s.subjectName}: Current attendance is ${s.attendancePct}% (Required: 75%). ${s.classesNeeded75 > 0 ? `Needs ${s.classesNeeded75} consecutive attended classes to restore eligibility.` : ""}`
+    );
+
     const summary = {
       totalConducted,
       present: presentClasses,
@@ -2528,13 +2539,17 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
       late: lateClasses,
       attended: attendedClasses,
       percentage: overallAttendancePct,
-      overallAttendancePct,
+      overallPercentage: overallAttendancePct,
+      shortageCount: shortageSubjects.length,
     };
 
     return res.json({
       summary,
       profile,
+      student: profile,
       subjects: displayedSubjects,
+      shortageSubjects,
+      alerts,
       history: historyLogs,
       records: historyLogs,
       stats: {
@@ -2544,6 +2559,7 @@ router.get(["/student/my-attendance", "/student"], authenticateToken, async (req
         absentClasses,
         lateClasses,
         totalConducted,
+        shortageCount: shortageSubjects.length,
       },
     });
   } catch (error: any) {
