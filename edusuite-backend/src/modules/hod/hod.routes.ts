@@ -21,6 +21,54 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
   }
 });
 
+// GET /api/hod/attendance/summary: Department attendance summary
+router.get("/attendance/summary", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      req.query.department as string
+    );
+    const data = await AnitsHodService.getHodAttendanceSummary(ctx);
+    return res.json(data);
+  } catch (error: any) {
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load attendance summary." });
+  }
+});
+
+// GET /api/hod/attendance/students: Department student attendance
+router.get("/attendance/students", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      req.query.department as string
+    );
+    const data = await AnitsHodService.getHodStudentAttendance(ctx, req.query as any);
+    return res.json(data);
+  } catch (error: any) {
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load student attendance." });
+  }
+});
+
+// GET /api/hod/attendance/faculty: Department faculty conduction
+router.get("/attendance/faculty", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      req.query.department as string
+    );
+    const data = await AnitsHodService.getHodFacultyConduction(ctx);
+    return res.json(data);
+  } catch (error: any) {
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load faculty conduction." });
+  }
+});
+
 // Department code to prefix / aliases map
 function resolveDeptAliases(dept: string): { code: string; fullNames: string[]; prefix: string } {
   const clean = (dept || "CSE").toUpperCase().trim();

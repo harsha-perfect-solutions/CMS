@@ -66,8 +66,6 @@ export function AnitsSidebar({
           { label: "Dashboard", href: "/anits/dashboard", icon: LayoutDashboard },
           { label: "Department Timetable", href: "/anits/timetable", icon: Calendar },
           { label: "Attendance", href: "/anits/attendance", icon: ClipboardCheck },
-          { label: "Faculty Attendance", href: "/anits/attendance?tab=faculty", icon: UserCheck },
-          { label: "Student Attendance", href: "/anits/attendance?tab=student", icon: GraduationCap },
           { label: "Reports", href: "/anits/reports", icon: FileBarChart },
           { label: "Profile", href: "/anits/profile", icon: User },
         ];

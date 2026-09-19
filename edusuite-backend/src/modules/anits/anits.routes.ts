@@ -3397,6 +3397,27 @@ router.get("/hod/attendance/student/:id", authenticateToken, async (req: Authent
   }
 });
 
+// GET /api/anits/hod/attendance/summary: Unified department attendance summary & analytics
+router.get("/hod/attendance/summary", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!(await isHodOrAdmin(req))) {
+      return res.status(403).json({ error: "Access denied. HOD role required." });
+    }
+    const requestedDept = (req.query.department || req.query.departmentId || req.query.dept) as string;
+    const ctx = await AnitsHodService.resolveHodContext(
+      req.userId!,
+      req.userRole!,
+      req.userDepartment,
+      requestedDept
+    );
+    const data = await AnitsHodService.getHodAttendanceSummary(ctx);
+    return res.json(data);
+  } catch (error: any) {
+    console.error("GET /api/anits/hod/attendance/summary error:", error);
+    return res.status(error.statusCode || 500).json({ error: error.message || "Failed to load attendance summary." });
+  }
+});
+
 // GET /api/anits/hod/attendance/export: Filter-aware department attendance CSV
 router.get("/hod/attendance/export", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
