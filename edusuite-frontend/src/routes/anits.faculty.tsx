@@ -720,10 +720,11 @@ function AnitsFacultyPage() {
                       {/* Assigned Subjects */}
                       <td className="py-3 px-4 text-center whitespace-nowrap">
                         <span className="font-semibold text-foreground">{f.assignedSubjectsCount}</span>
-                        {f.assignedSections && f.assignedSections.length > 0 && (
+                        {Boolean(f.assignedSections && (Array.isArray(f.assignedSections) ? f.assignedSections.length > 0 : String(f.assignedSections).length > 0)) && (
                           <div className="text-[10px] text-muted-foreground">
-                            Sec {f.assignedSections.slice(0, 3).join(", ")}
-                            {f.assignedSections.length > 3 ? "..." : ""}
+                            Sec {Array.isArray(f.assignedSections)
+                              ? `${f.assignedSections.slice(0, 3).join(", ")}${f.assignedSections.length > 3 ? "..." : ""}`
+                              : String(f.assignedSections)}
                           </div>
                         )}
                       </td>

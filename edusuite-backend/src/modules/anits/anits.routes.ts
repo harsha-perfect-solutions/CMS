@@ -1873,7 +1873,8 @@ router.get("/super-admin/faculty", authenticateToken, async (req: AuthenticatedR
       alloc?.sections.forEach((sec) => combinedSections.add(sec));
       slot?.sections.forEach((sec) => combinedSections.add(sec));
 
-      const sectionsStr = combinedSections.size > 0 ? Array.from(combinedSections).sort().join(", ") : "Unassigned";
+      const sectionsArray = Array.from(combinedSections).sort();
+      const sectionsStr = sectionsArray.length > 0 ? sectionsArray.join(", ") : "Unassigned";
       const assignedSubjectsCount = alloc ? alloc.subjects.size : 0;
       const weeklyTeachingLoad = slot ? slot.total : 0;
       const todayClassesCount = slot ? slot.today : 0;
@@ -1888,7 +1889,8 @@ router.get("/super-admin/faculty", authenticateToken, async (req: AuthenticatedR
         rawRole: f.role,
         status: f.status || "Active",
         assignedSubjectsCount,
-        assignedSections: sectionsStr,
+        assignedSections: sectionsArray,
+        assignedSectionsStr: sectionsStr,
         weeklyTeachingLoad,
         todayClassesCount,
         attendanceSessionsCount: attCount,
