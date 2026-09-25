@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import { prisma } from "../../db";
 import { authenticateToken, AuthenticatedRequest } from "../auth/auth.routes";
+import { ExamNotificationService } from "../notifications/exam-notifications.service";
 
 const router = Router();
 
@@ -177,10 +178,24 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
         });
       }
 
-      const notifications = [
-        { id: 1, title: "Fee Submission Extended", message: "Fee payment deadline for backlog examinations extended to Aug 15.", time: "2 hours ago", type: "urgent" },
-        { id: 2, title: "Timetables Approved", message: "Draft timetables for AIML Year 2 Sem 3 released and approved.", time: "1 day ago", type: "info" }
-      ];
+      const dbNotifs = await prisma.notification.findMany({
+        where: {
+          OR: [
+            { type: { in: ["EXAM_SCHEDULE", "EXAM_PUBLISHED", "EXAM_RESCHEDULED", "EXAM_CANCELLED", "HALL_TICKET", "RESULTS_PUBLISHED", "ATTENDANCE_SHORTAGE", "EXAM_BROADCAST"] } },
+            { role: { in: ["super_admin", "admin", "exam_cell"] } },
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      });
+
+      const notifications = dbNotifs.map((n) => ({
+        id: n.id,
+        title: n.title,
+        message: n.message,
+        time: new Date(n.createdAt).toLocaleDateString(),
+        type: n.type.toLowerCase().includes("urgent") || n.type.includes("CANCEL") || n.type.includes("SHORTAGE") ? "urgent" : "info",
+      }));
 
       return res.json({
         totalStudents,
@@ -266,12 +281,24 @@ router.get("/dashboard", authenticateToken, async (req: AuthenticatedRequest, re
       });
     }
 
-    const notifications = [
-      { id: 1, title: "Fee Submission Extended", message: "Fee payment deadline for backlog examinations extended to Aug 15.", time: "2 hours ago", type: "urgent" },
-      { id: 2, title: "Timetables Approved", message: "Draft timetables for AIML Year 2 Sem 3 released and approved.", time: "1 day ago", type: "info" },
-      { id: 3, title: "Booklet Valuation Schedule", message: "Physical answer sheet booklet collection scheduled for next Monday.", time: "2 days ago", type: "warning" },
-      { id: 4, title: "Invigilation Duties Draft", message: "Draft invigilation duty mappings dispatched to department heads.", time: "3 days ago", type: "info" }
-    ];
+    const dbNotifs = await prisma.notification.findMany({
+      where: {
+        OR: [
+          { type: { in: ["EXAM_SCHEDULE", "EXAM_PUBLISHED", "EXAM_RESCHEDULED", "EXAM_CANCELLED", "HALL_TICKET", "RESULTS_PUBLISHED", "ATTENDANCE_SHORTAGE", "EXAM_BROADCAST"] } },
+          { role: { in: ["super_admin", "admin", "exam_cell"] } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+
+    const notifications = dbNotifs.map((n) => ({
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      time: new Date(n.createdAt).toLocaleDateString(),
+      type: n.type.toLowerCase().includes("urgent") || n.type.includes("CANCEL") || n.type.includes("SHORTAGE") ? "urgent" : "info",
+    }));
 
     res.json({
       totalStudents,
@@ -1189,13 +1216,23 @@ router.put(["/:id", "/schedules/:id"], authenticateToken, async (req: Authentica
       },
     });
 
+    // Check if dates or schedule details were changed (Rescheduled event)
+    const datesChanged = (startDate && startDate !== existing.startDate) || (endDate && endDate !== existing.endDate);
+    if (datesChanged || status === "Rescheduled") {
+      await ExamNotificationService.notifyExamRescheduled(updated, existing, {
+        id: req.userId,
+        name: req.userEmail || "Exam Controller",
+        role: req.userRole || "super_admin",
+      });
+    }
+
     return res.json({ success: true, message: "Exam schedule updated successfully.", exam: updated });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }
 });
 
-// POST /api/exams/:id/publish: Publish examination and generate persistent notifications for eligible students
+// POST /api/exams/:id/publish: Publish examination and generate persistent notifications for eligible students, faculty, HOD, and Super Admin
 router.post(["/:id/publish", "/schedules/:id/publish"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
 
@@ -1210,40 +1247,24 @@ router.post(["/:id/publish", "/schedules/:id/publish"], authenticateToken, async
       data: { status: "Published", updatedAt: new Date() },
     });
 
-    // Determine eligible students based on department and semester
-    const eligibleStudents = await prisma.student.findMany({
-      where: {
-        department: { equals: existing.department, mode: "insensitive" },
-        semester: existing.semester,
-        status: { not: "Inactive" },
-      },
-      select: { id: true, name: true, rollNumber: true },
+    // Centralized notification dispatch to eligible Students, Faculty, HOD, and Super Admin with AuditLog
+    await ExamNotificationService.notifyExamPublished(updated, {
+      id: req.userId,
+      name: req.userEmail || "Exam Controller",
+      role: req.userRole || "super_admin",
     });
-
-    if (eligibleStudents.length > 0) {
-      await prisma.notification.createMany({
-        data: eligibleStudents.map((s) => ({
-          studentId: s.id,
-          title: `Examination Published: ${existing.name}`,
-          message: `${existing.name} (${existing.type}) has been published for ${existing.department} Semester ${existing.semester}. Schedule: ${existing.startDate || "TBA"} to ${existing.endDate || "TBA"}.`,
-          type: "EXAM_PUBLISHED",
-          isRead: false,
-        })),
-      });
-    }
 
     return res.json({
       success: true,
-      message: `Exam '${existing.name}' published successfully. Notified ${eligibleStudents.length} eligible students.`,
+      message: `Exam '${existing.name}' published successfully and role-scoped notifications dispatched.`,
       exam: updated,
-      notifiedStudentsCount: eligibleStudents.length,
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }
 });
 
-// DELETE /api/exams/:id: Delete an examination schedule
+// DELETE /api/exams/:id: Delete an examination schedule and notify affected users
 router.delete(["/:id", "/schedules/:id"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
 
@@ -1253,8 +1274,15 @@ router.delete(["/:id", "/schedules/:id"], authenticateToken, async (req: Authent
       return res.status(404).json({ error: "Exam schedule not found." });
     }
 
+    // Centralized notification dispatch for cancelled examination with AuditLog
+    await ExamNotificationService.notifyExamCancelled(existing, {
+      id: req.userId,
+      name: req.userEmail || "Exam Controller",
+      role: req.userRole || "super_admin",
+    });
+
     await prisma.examSchedule.delete({ where: { id } });
-    return res.json({ success: true, message: "Exam schedule deleted successfully." });
+    return res.json({ success: true, message: "Exam schedule deleted and cancellation notifications issued." });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }

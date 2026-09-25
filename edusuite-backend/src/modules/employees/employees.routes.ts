@@ -698,7 +698,7 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
 
     // Security check: Block cross-faculty timetable snooping if facultyId query param passed by client
     const requestedFacultyId = req.query.facultyId as string;
-    if (requestedFacultyId && authRole === "faculty" && requestedFacultyId !== authUserId) {
+    if (requestedFacultyId && authRole !== "super_admin" && authRole !== "admin" && requestedFacultyId !== authUserId) {
       return res.status(403).json({
         error: "Access denied. You are only authorized to view your own personal faculty timetable.",
       });
@@ -835,6 +835,12 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
       day: "numeric",
       timeZone: "Asia/Kolkata",
     });
+    const todayDateStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(nowUtc);
     // IST current minutes within the day
     const currentMins = nowIst.getUTCHours() * 60 + nowIst.getUTCMinutes();
 
@@ -854,9 +860,23 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
       (r) => r.day.toLowerCase() === todayName.toLowerCase()
     );
 
+    // Check attendance status for today's sessions from PostgreSQL AttendanceRecord
+    const todayTimetableIds = todayRecords.map((r) => r.id);
+    const existingAttendance = todayTimetableIds.length > 0
+      ? await prisma.attendanceRecord.findMany({
+          where: {
+            timetableId: { in: todayTimetableIds },
+            date: todayDateStr,
+          },
+          select: { timetableId: true },
+        })
+      : [];
+    const submittedTimetableIds = new Set(existingAttendance.map((a) => a.timetableId).filter(Boolean));
+
     const todaySchedule = todayRecords.map((r) => {
       const startMins = parseTimeToMinutes(r.startTime);
       const endMins = parseTimeToMinutes(r.endTime);
+      const isSubmitted = submittedTimetableIds.has(r.id);
 
       let status: "Completed" | "Ongoing" | "Upcoming" = "Upcoming";
       if (currentMins >= endMins) {
@@ -889,6 +909,8 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
         isLab: r.isLab,
         status,
         isOngoing: status === "Ongoing",
+        attendanceSubmitted: isSubmitted,
+        attendanceStatus: isSubmitted ? "ATTENDANCE_SUBMITTED" : "PENDING",
       };
     });
 
@@ -1062,9 +1084,9 @@ router.get(["/my-timetable", "/timetable/me", "/timetable"], authenticateToken, 
 });
 
 // =========================================================================
-// GET /api/faculty/my-classes-students: Strictly Scoped Roster for Authenticated Faculty
+// GET /api/faculty/my-classes, /my-classes-students: Strictly Scoped Classes & Roster for Authenticated Faculty
 // =========================================================================
-router.get(["/my-classes-students", "/my-students"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+router.get(["/my-classes", "/my-classes-students", "/my-students"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const authUserId = req.userId;
     const authRole = (req.userRole || "").toLowerCase();
@@ -1129,13 +1151,23 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
         isClassAdvisor: false,
         advisedClass: null,
         summary: {
+          myCourses: 0,
+          mySections: 0,
+          assignedStudents: 0,
+          weeklyPeriods: 0,
           totalClasses: 0,
           totalSections: 0,
-          assignedStudents: 0,
           attendanceAlerts: 0,
           gradeAlerts: 0,
           averageAttendance: null,
           averageGpa: null,
+          academicYear: "2026-27",
+        },
+        filterOptions: {
+          academicYears: ["2026-27"],
+          semesters: [],
+          sections: [],
+          courses: [],
         },
         classes: [],
         sections: [],
@@ -1149,7 +1181,7 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
       prisma.masterTimetable.findMany({
         where: { facultyId: faculty.id },
         include: { course: true },
-        orderBy: [{ semester: "asc" }, { section: "asc" }, { day: "asc" }],
+        orderBy: [{ semester: "asc" }, { section: "asc" }, { day: "asc" }, { periodNumber: "asc" }],
       }),
       prisma.subjectAllocation.findMany({
         where: { facultyId: faculty.id },
@@ -1160,9 +1192,13 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
     // Group into distinct teaching assignments / classes
     interface ClassInfo {
       id: string;
+      timetableId: string;
+      timetableIds: string[];
       courseId: string;
       courseCode: string;
       courseName: string;
+      courseType: string;
+      credits: number;
       department: string;
       semester: number;
       section: string;
@@ -1171,7 +1207,12 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
       displayName: string;
       periodsPerWeek: number;
       roomNo: string;
+      rooms: string[];
       isLab: boolean;
+      academicYear: string;
+      days: string[];
+      studentCount: number;
+      hasEnrollmentData: boolean;
     }
 
     const classMap = new Map<string, ClassInfo>();
@@ -1182,13 +1223,21 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
       const key = `${tt.branch}-${tt.semester}-${cleanSec}-${tt.course.code}`;
       const classCode = `${tt.branch}-${tt.semester}${cleanSec}`;
       const displayName = `${classCode} — ${tt.course.name}`;
+      const room = tt.roomNo || (tt.isLab ? "Lab" : "Lecture Hall");
+      const courseType = tt.isLab ? "Lab" : (tt.course.category || "Theory");
+      const credits = tt.course.credits || (tt.isLab ? 2 : 3);
+      const acadYear = tt.academicYear || "2026-27";
 
       if (!classMap.has(key)) {
         classMap.set(key, {
           id: key,
+          timetableId: tt.id,
+          timetableIds: [tt.id],
           courseId: tt.course.id,
           courseCode: tt.course.code,
           courseName: tt.course.name,
+          courseType,
+          credits,
           department: tt.branch,
           semester: tt.semester,
           section: tt.section || `Section ${cleanSec}`,
@@ -1196,12 +1245,27 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
           classCode,
           displayName,
           periodsPerWeek: 1,
-          roomNo: tt.roomNo || (tt.isLab ? "Lab" : "Lecture Hall"),
+          roomNo: room,
+          rooms: room ? [room] : [],
           isLab: tt.isLab,
+          academicYear: acadYear,
+          days: tt.day ? [tt.day] : [],
+          studentCount: 0,
+          hasEnrollmentData: false,
         });
       } else {
         const item = classMap.get(key)!;
         item.periodsPerWeek += 1;
+        if (!item.timetableIds.includes(tt.id)) {
+          item.timetableIds.push(tt.id);
+        }
+        if (room && !item.rooms.includes(room)) {
+          item.rooms.push(room);
+          item.roomNo = item.rooms.join(", ");
+        }
+        if (tt.day && !item.days.includes(tt.day)) {
+          item.days.push(tt.day);
+        }
       }
     }
 
@@ -1217,9 +1281,13 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
       if (!classMap.has(key)) {
         classMap.set(key, {
           id: key,
+          timetableId: alloc.id,
+          timetableIds: [alloc.id],
           courseId: alloc.course.id,
           courseCode: alloc.course.code,
           courseName: alloc.course.name,
+          courseType: alloc.course.category || "Theory",
+          credits: alloc.course.credits || 3,
           department: alloc.department,
           semester: semNum,
           section: alloc.section || `Section ${cleanSec}`,
@@ -1228,7 +1296,12 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
           displayName,
           periodsPerWeek: alloc.weeklyHours || 3,
           roomNo: "Lecture Hall",
+          rooms: ["Lecture Hall"],
           isLab: false,
+          academicYear: "2026-27",
+          days: [],
+          studentCount: 0,
+          hasEnrollmentData: false,
         });
       }
     }
@@ -1466,7 +1539,15 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
         )
       : null;
 
-    // Attach student count to each assigned class card
+    // Attach student count and unique metrics to assigned classes
+    const uniqueCourseCodes = Array.from(new Set(assignedClasses.map((c) => c.courseCode)));
+    const uniqueCourses = Array.from(
+      new Map(assignedClasses.map((c) => [c.courseCode, { id: c.courseId, code: c.courseCode, name: c.courseName }])).values()
+    );
+    const uniqueSemesters = Array.from(new Set(assignedClasses.map((c) => c.semester))).sort((a, b) => a - b);
+    const totalWeeklyPeriods = assignedClasses.reduce((sum, c) => sum + c.periodsPerWeek, 0);
+
+    const hasAnyEnrollmentData = rawStudents.length > 0;
     const classesWithCounts = assignedClasses.map((c) => {
       const enrolledCount = rawStudents.filter((s) => {
         const cleanSec = (s.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
@@ -1476,7 +1557,11 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
           cleanSec === c.cleanSection
         );
       }).length;
-      return { ...c, studentCount: enrolledCount };
+      return {
+        ...c,
+        studentCount: enrolledCount,
+        hasEnrollmentData: hasAnyEnrollmentData,
+      };
     });
 
     return res.json({
@@ -1490,15 +1575,25 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
       isClassAdvisor: true,
       advisedClass: uniqueClassCodes[0] || `${faculty.department || "CSE"}-5A`,
       academicYear: "2026-27",
-      semester: "Semester 5",
+      semester: uniqueSemesters.length > 0 ? `Semester ${uniqueSemesters[0]}` : "Semester 5",
       summary: {
+        myCourses: uniqueCourseCodes.length,
+        mySections: uniqueSections.length,
+        assignedStudents: totalStudentsInAssignedClasses,
+        weeklyPeriods: totalWeeklyPeriods,
         totalClasses: assignedClasses.length,
         totalSections: uniqueSections.length,
-        assignedStudents: totalStudentsInAssignedClasses,
         attendanceAlerts: attendanceAlertsCount,
         gradeAlerts: gradeAlertsCount,
         averageAttendance,
         averageGpa,
+        academicYear: "2026-27",
+      },
+      filterOptions: {
+        academicYears: ["2026-27"],
+        semesters: uniqueSemesters,
+        sections: uniqueSections.map((s) => `Section ${s}`),
+        courses: uniqueCourses,
       },
       classes: classesWithCounts,
       sections: uniqueSections,
@@ -1508,6 +1603,137 @@ router.get(["/my-classes-students", "/my-students"], authenticateToken, async (r
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// =========================================================================
+// GET /api/faculty/my-classes/export: Export Faculty Classes Ledger CSV
+// =========================================================================
+router.get(["/my-classes/export", "/my-classes-export"], authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const authUserId = req.userId;
+    const authRole = (req.userRole || "").toLowerCase();
+
+    if (!authUserId) {
+      return res.status(401).json({ error: "Unauthorized. Authentication session required." });
+    }
+
+    let faculty = await prisma.faculty.findUnique({
+      where: { id: authUserId },
+      select: { id: true, name: true, department: true },
+    });
+
+    if (!faculty && (authRole === "super_admin" || authRole === "admin")) {
+      faculty = await prisma.faculty.findFirst({
+        where: { status: "Active" },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, department: true },
+      });
+    }
+
+    if (!faculty) {
+      return res.status(403).json({ error: "Access denied." });
+    }
+
+    // Query MasterTimetable assigned to this faculty
+    const timetables = await prisma.masterTimetable.findMany({
+      where: { facultyId: faculty.id },
+      include: { course: true },
+      orderBy: [{ semester: "asc" }, { section: "asc" }, { day: "asc" }, { periodNumber: "asc" }],
+    });
+
+    // Group into unique classes
+    const classMap = new Map<string, any>();
+    for (const tt of timetables) {
+      if (!tt.course) continue;
+      const cleanSec = (tt.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+      const key = `${tt.branch}-${tt.semester}-${cleanSec}-${tt.course.code}`;
+      const room = tt.roomNo || (tt.isLab ? "Lab" : "Lecture Hall");
+
+      if (!classMap.has(key)) {
+        classMap.set(key, {
+          courseCode: tt.course.code,
+          courseName: tt.course.name,
+          section: `Section ${cleanSec}`,
+          cleanSection: cleanSec,
+          semester: tt.semester,
+          department: tt.branch,
+          academicYear: tt.academicYear || "2026-27",
+          weeklyPeriods: 1,
+          rooms: room ? [room] : [],
+        });
+      } else {
+        const item = classMap.get(key);
+        item.weeklyPeriods += 1;
+        if (room && !item.rooms.includes(room)) {
+          item.rooms.push(room);
+        }
+      }
+    }
+
+    const classList = Array.from(classMap.values());
+
+    // Fetch student counts
+    const cohortConditions = classList.map((c) => ({
+      department: { equals: c.department, mode: "insensitive" as const },
+      semester: c.semester,
+      section: { in: [c.cleanSection, `Section ${c.cleanSection}`, c.cleanSection.toLowerCase()] },
+    }));
+
+    const rawStudents = cohortConditions.length > 0
+      ? await prisma.student.findMany({
+          where: { OR: cohortConditions },
+          select: { department: true, semester: true, section: true },
+        })
+      : [];
+
+    const headers = [
+      "Course Code",
+      "Course Name",
+      "Section",
+      "Semester",
+      "Academic Year",
+      "Weekly Periods",
+      "Room",
+      "Student Count",
+    ];
+
+    const escapeCsv = (val: any) => {
+      const str = String(val ?? "").replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const csvRows = [headers.map(escapeCsv).join(",")];
+
+    for (const c of classList) {
+      const studentCount = rawStudents.filter((s) => {
+        const cleanSec = (s.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+        return (
+          s.department?.toUpperCase() === c.department.toUpperCase() &&
+          s.semester === c.semester &&
+          cleanSec === c.cleanSection
+        );
+      }).length;
+
+      csvRows.push(
+        [
+          escapeCsv(c.courseCode),
+          escapeCsv(c.courseName),
+          escapeCsv(c.section),
+          escapeCsv(`Semester ${c.semester}`),
+          escapeCsv(c.academicYear),
+          escapeCsv(c.weeklyPeriods),
+          escapeCsv(c.rooms.join(", ") || "Lecture Hall"),
+          escapeCsv(studentCount > 0 ? studentCount : "Enrollment data unavailable"),
+        ].join(",")
+      );
+    }
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="my_classes_ledger.csv"');
+    return res.status(200).send(csvRows.join("\r\n"));
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Failed to export classes." });
   }
 });
 

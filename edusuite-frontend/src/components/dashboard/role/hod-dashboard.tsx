@@ -209,6 +209,9 @@ export function HodDashboard() {
       case "View Timetable":
         navigate({ to: "/faculty/timetable" as any });
         break;
+      case "Exam Notifications":
+        navigate({ to: "/hod/exam-notifications" as any });
+        break;
       case "Department Faculty":
         navigate({ to: "/hod/faculty" as any });
         break;
@@ -498,10 +501,10 @@ export function HodDashboard() {
         <Panel title="Quick Action Cockpit" description="Operational department shortcuts">
           <div className="grid grid-cols-2 gap-3">
             {[
+              { label: "Exam Notifications", icon: Bell, color: "bg-purple-500/10 text-purple-600 hover:bg-purple-500/15 border-purple-500/20" },
               { label: "Department Faculty", icon: UserCog, color: "bg-blue-500/10 text-blue-600 hover:bg-blue-500/15 border-blue-500/20" },
               { label: "Take Attendance", icon: CalendarCheck, color: "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/15 border-emerald-500/20" },
               { label: "Upload Materials", icon: FileText, color: "bg-violet-500/10 text-violet-600 hover:bg-violet-500/15 border-violet-500/20" },
-              { label: "Create Assignment", icon: Plus, color: "bg-amber-500/10 text-amber-600 hover:bg-amber-500/15 border-amber-500/20" },
               { label: "Enter Marks", icon: FileSpreadsheet, color: "bg-teal-500/10 text-teal-600 hover:bg-teal-500/15 border-teal-500/20" },
               { label: "View Timetable", icon: Clock, color: "bg-indigo-500/10 text-indigo-600 hover:bg-indigo-500/15 border-indigo-500/20" },
             ].map((btn, i) => (

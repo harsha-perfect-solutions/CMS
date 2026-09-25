@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Zap,
   BellRing,
+  Bell,
   PieChart,
   ShieldAlert,
   Search,

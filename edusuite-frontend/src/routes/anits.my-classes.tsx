@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRole } from "@/context/role-context";
 import api from "@/lib/api";
 import { toast } from "sonner";
@@ -37,10 +37,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  FacultyClassesService,
+  type FacultyClassItem,
+  type FacultyClassesResponse,
+  type EnrolledStudent,
+} from "@/services/FacultyClassesService";
 
 export const Route = createFileRoute("/anits/my-classes")({
   head: () => ({
-    meta: [{ title: "Classes & Student Cohorts — ANITS" }],
+    meta: [{ title: "My Classes & Sections — ANITS" }],
   }),
   validateSearch: (search: Record<string, unknown>) => {
     return {
@@ -53,7 +59,738 @@ export const Route = createFileRoute("/anits/my-classes")({
   component: AnitsClassesAndCohortsPage,
 });
 
+// =========================================================================
+// FACULTY WORKSPACE: MY CLASSES & SECTIONS (AUTHORITATIVE MASTER TIMETABLE)
+// =========================================================================
+function FacultyMyClassesWorkspace() {
+  const navigate = useNavigate();
+  const { role } = useRole();
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [data, setData] = useState<FacultyClassesResponse | null>(null);
+
+  // Faculty-scoped filters
+  const [selectedSemester, setSelectedSemester] = useState<string>("All");
+  const [selectedSection, setSelectedSection] = useState<string>("All");
+  const [selectedCourse, setSelectedCourse] = useState<string>("All");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Roster Modal state
+  const [rosterModalOpen, setRosterModalOpen] = useState(false);
+  const [selectedClassForRoster, setSelectedClassForRoster] = useState<FacultyClassItem | null>(null);
+  const [rosterSearch, setRosterSearch] = useState("");
+
+  const loadClasses = useCallback(async (isRefresh = false) => {
+    try {
+      if (isRefresh) setIsRefreshing(true);
+      else setLoading(true);
+      setError(null);
+
+      const res = await FacultyClassesService.fetchMyClasses();
+      setData(res);
+      if (isRefresh) {
+        toast.success("Synchronized with ANITS Master Timetable.");
+      }
+    } catch (err: any) {
+      const msg = err.message || "Unable to load your classes.";
+      setError(msg);
+      toast.error("Failed to load classes", { description: msg });
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadClasses();
+  }, [loadClasses]);
+
+  const handleExportCsv = async () => {
+    try {
+      setIsExporting(true);
+      const blob = await FacultyClassesService.exportMyClassesCsv();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `my_classes_ledger_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("My Classes CSV exported successfully.");
+    } catch (err: any) {
+      toast.error("Failed to export classes CSV.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const classes = data?.classes || [];
+
+  const filteredClasses = useMemo(() => {
+    return classes.filter((c) => {
+      // Semester filter
+      if (selectedSemester !== "All" && String(c.semester) !== selectedSemester) {
+        return false;
+      }
+      // Section filter
+      if (selectedSection !== "All") {
+        const cleanReq = selectedSection.replace(/^Section\s+/i, "").trim().toUpperCase();
+        if (c.cleanSection !== cleanReq && c.section !== selectedSection) {
+          return false;
+        }
+      }
+      // Course filter
+      if (selectedCourse !== "All") {
+        if (c.courseCode !== selectedCourse && c.courseId !== selectedCourse) {
+          return false;
+        }
+      }
+      // Search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchesCode = c.courseCode.toLowerCase().includes(q);
+        const matchesName = c.courseName.toLowerCase().includes(q);
+        const matchesSec = c.section.toLowerCase().includes(q) || c.cleanSection.toLowerCase().includes(q);
+        const matchesRoom = (c.roomNo || "").toLowerCase().includes(q);
+        if (!matchesCode && !matchesName && !matchesSec && !matchesRoom) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [classes, selectedSemester, selectedSection, selectedCourse, searchQuery]);
+
+  const hasActiveFilters =
+    selectedSemester !== "All" ||
+    selectedSection !== "All" ||
+    selectedCourse !== "All" ||
+    searchQuery.trim() !== "";
+
+  const handleResetFilters = () => {
+    setSelectedSemester("All");
+    setSelectedSection("All");
+    setSelectedCourse("All");
+    setSearchQuery("");
+  };
+
+  const studentsInSelectedClass = useMemo(() => {
+    if (!selectedClassForRoster || !data?.students) return [];
+    return data.students.filter((s) => {
+      const cleanSec = (s.section || "A").replace(/^Section\s+/i, "").trim().toUpperCase();
+      const matchesSection = cleanSec === selectedClassForRoster.cleanSection;
+      const matchesSemester =
+        Number(s.semester) === selectedClassForRoster.semester ||
+        String(s.semester).includes(String(selectedClassForRoster.semester));
+      return matchesSection && matchesSemester;
+    });
+  }, [selectedClassForRoster, data?.students]);
+
+  const filteredRosterStudents = useMemo(() => {
+    if (!rosterSearch.trim()) return studentsInSelectedClass;
+    const q = rosterSearch.toLowerCase().trim();
+    return studentsInSelectedClass.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.rollNumber.toLowerCase().includes(q) ||
+        (s.email && s.email.toLowerCase().includes(q))
+    );
+  }, [studentsInSelectedClass, rosterSearch]);
+
+  const facultyName = data?.faculty?.name || "Dr. Ravi Kumar";
+  const facultyDept = data?.faculty?.department || "CSE";
+  const academicYear = data?.academicYear || "2026-27";
+
+  const summary = data?.summary || {
+    myCourses: 0,
+    mySections: 0,
+    assignedStudents: 0,
+    weeklyPeriods: 0,
+  };
+
+  // 1. Loading Skeleton State
+  if (loading) {
+    return (
+      <div className="space-y-6 pb-12 animate-pulse">
+        {/* Header Skeleton */}
+        <div className="bg-card p-5 rounded-xl border border-border/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-2">
+            <div className="h-6 w-56 bg-muted/60 rounded-md" />
+            <div className="h-3.5 w-80 bg-muted/40 rounded-md" />
+          </div>
+          <div className="flex gap-2">
+            <div className="h-8 w-24 bg-muted/50 rounded-lg" />
+            <div className="h-8 w-24 bg-muted/50 rounded-lg" />
+          </div>
+        </div>
+
+        {/* 4 Cards Skeleton */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i} className="p-4 rounded-xl border-border/60">
+              <div className="h-4 w-24 bg-muted/50 rounded mb-3" />
+              <div className="h-8 w-16 bg-muted/70 rounded mb-2" />
+              <div className="h-3 w-32 bg-muted/40 rounded" />
+            </Card>
+          ))}
+        </div>
+
+        {/* Filter Skeleton */}
+        <Card className="p-4 rounded-xl border-border/60">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="h-8 bg-muted/40 rounded-lg" />
+            ))}
+          </div>
+        </Card>
+
+        {/* Ledger Skeleton */}
+        <Card className="p-6 rounded-xl border-border/60 space-y-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-20 bg-muted/30 rounded-xl" />
+          ))}
+        </Card>
+      </div>
+    );
+  }
+
+  // 2. Error State
+  if (error && !data) {
+    return (
+      <div className="p-12 text-center bg-card rounded-2xl border border-destructive/30 space-y-4 max-w-lg mx-auto mt-8">
+        <AlertTriangle className="size-10 text-destructive mx-auto" />
+        <h3 className="font-bold text-base text-foreground">Unable to load your classes</h3>
+        <p className="text-xs text-muted-foreground">{error}</p>
+        <Button
+          onClick={() => loadClasses(false)}
+          className="rounded-xl text-xs bg-primary text-primary-foreground font-semibold"
+        >
+          <RotateCcw className="size-3.5 mr-1.5" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 pb-12">
+      {/* 1. Page Header: Personal Faculty Workspace */}
+      <div className="bg-card p-5 rounded-xl border border-border/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-black text-foreground tracking-tight">
+              MY CLASSES &amp; SECTIONS
+            </h1>
+            <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20 font-bold">
+              PostgreSQL Live
+            </Badge>
+            <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-600 border-blue-500/20 font-semibold">
+              {facultyDept} Department
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5 font-medium">
+            Classes and student cohorts assigned to <span className="font-bold text-foreground">{facultyName}</span> from the ANITS Master Timetable.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportCsv}
+            disabled={isExporting}
+            className="h-8 text-xs font-semibold rounded-lg gap-1.5 border-border/60 hover:bg-muted/40"
+          >
+            {isExporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5 text-muted-foreground" />}
+            Export CSV
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => loadClasses(true)}
+            disabled={isRefreshing}
+            className="h-8 text-xs font-semibold rounded-lg gap-1.5 bg-[#0A1128] hover:bg-[#121B3B] text-white"
+          >
+            <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* 2. Four PostgreSQL-Driven Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* CARD 1: MY COURSES */}
+        <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card hover:border-primary/40 transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">My Courses</span>
+            <div className="size-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-600">
+              <BookOpen className="size-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-foreground mt-2">
+            {summary.myCourses}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Distinct course curriculums taught
+          </p>
+        </Card>
+
+        {/* CARD 2: MY SECTIONS */}
+        <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card hover:border-primary/40 transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">My Sections</span>
+            <div className="size-8 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-600">
+              <Layers className="size-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-foreground mt-2">
+            {summary.mySections}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Active cohort divisions taught
+          </p>
+        </Card>
+
+        {/* CARD 3: ASSIGNED STUDENTS */}
+        <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card hover:border-primary/40 transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Assigned Students</span>
+            <div className="size-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-600">
+              <Users className="size-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-foreground mt-2">
+            {summary.assignedStudents}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Distinct enrolled cohort students
+          </p>
+        </Card>
+
+        {/* CARD 4: WEEKLY LOAD */}
+        <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card hover:border-primary/40 transition-colors">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Weekly Load</span>
+            <div className="size-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-600">
+              <Clock className="size-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-foreground mt-2">
+            {summary.weeklyPeriods} <span className="text-sm font-semibold text-muted-foreground">Periods/Wk</span>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Scheduled in MasterTimetable
+          </p>
+        </Card>
+      </div>
+
+      {/* 3. Faculty-Scoped Filters (NO 'All Departments' filter!) */}
+      <Card className="rounded-xl border-border/60 p-4 shadow-xs bg-card">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search course, section, room..."
+              className="h-8 pl-8 text-xs rounded-lg border-border/60 bg-background"
+            />
+          </div>
+
+          {/* Academic Year */}
+          <div>
+            <select
+              value={academicYear}
+              disabled
+              className="w-full h-8 px-2.5 text-xs rounded-lg border border-border/60 bg-muted/40 font-medium text-foreground cursor-not-allowed opacity-90"
+            >
+              <option value="2026-27">Academic Year: 2026-27</option>
+            </select>
+          </div>
+
+          {/* Semester Filter */}
+          <div>
+            <select
+              value={selectedSemester}
+              onChange={(e) => setSelectedSemester(e.target.value)}
+              className="w-full h-8 px-2.5 text-xs rounded-lg border border-border/60 bg-background font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="All">All My Semesters</option>
+              {data?.filterOptions?.semesters.map((sem) => (
+                <option key={sem} value={String(sem)}>
+                  Semester {sem}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Section Filter */}
+          <div>
+            <select
+              value={selectedSection}
+              onChange={(e) => setSelectedSection(e.target.value)}
+              className="w-full h-8 px-2.5 text-xs rounded-lg border border-border/60 bg-background font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="All">All My Sections</option>
+              {data?.filterOptions?.sections.map((sec) => (
+                <option key={sec} value={sec}>
+                  {sec}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Course Filter */}
+          <div>
+            <select
+              value={selectedCourse}
+              onChange={(e) => setSelectedCourse(e.target.value)}
+              className="w-full h-8 px-2.5 text-xs rounded-lg border border-border/60 bg-background font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="All">All My Courses</option>
+              {data?.filterOptions?.courses.map((crs) => (
+                <option key={crs.id || crs.code} value={crs.code}>
+                  {crs.code} — {crs.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Reset Filter Action */}
+        {hasActiveFilters && (
+          <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/40 text-xs">
+            <span className="text-muted-foreground">
+              Filtered to <span className="font-semibold text-foreground">{filteredClasses.length}</span> of{" "}
+              <span className="font-semibold text-foreground">{classes.length}</span> classes
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleResetFilters}
+              className="h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground gap-1"
+            >
+              <RotateCcw className="size-3" />
+              Reset Filters
+            </Button>
+          </div>
+        )}
+      </Card>
+
+      {/* 4. Class & Section Ledger */}
+      <Card className="rounded-xl border-border/60 overflow-hidden shadow-xs bg-card">
+        <CardHeader className="bg-muted/15 border-b border-border/40 py-3.5 px-6 flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-sm font-bold text-foreground">My Class &amp; Section Ledger</CardTitle>
+            <CardDescription className="text-xs">
+              Showing {filteredClasses.length} of {classes.length} classes
+            </CardDescription>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Academic Year: <span className="font-semibold text-foreground">{academicYear}</span>
+          </div>
+        </CardHeader>
+
+        <CardContent className="p-4 sm:p-6">
+          {classes.length === 0 ? (
+            <div className="p-16 text-center text-xs text-muted-foreground space-y-2">
+              <BookOpen className="size-8 text-muted-foreground/40 mx-auto" />
+              <p className="font-semibold text-foreground text-sm">No classes are currently assigned to you.</p>
+              <p className="text-[11px] max-w-sm mx-auto">
+                Your classes will appear here automatically once teaching sessions are assigned in the ANITS Master Timetable.
+              </p>
+            </div>
+          ) : filteredClasses.length === 0 ? (
+            <div className="p-16 text-center text-xs text-muted-foreground space-y-2">
+              <AlertTriangle className="size-7 text-amber-500 mx-auto opacity-80" />
+              <p className="font-semibold text-foreground text-sm">No classes or sections match the selected filters.</p>
+              <p className="text-[11px]">Try resetting filters or searching with a different term.</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetFilters}
+                className="mt-2 text-xs rounded-lg"
+              >
+                Reset Filters
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredClasses.map((c) => {
+                const isLabCourse = c.isLab || c.courseType === "Lab";
+                return (
+                  <div
+                    key={c.id}
+                    className="p-5 rounded-xl border border-border/60 bg-card hover:border-primary/40 hover:shadow-xs transition-all flex flex-col justify-between gap-4"
+                  >
+                    <div>
+                      {/* Top row: Badges and Course Code */}
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-black text-foreground">
+                            {c.courseCode}
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] font-bold ${
+                              isLabCourse
+                                ? "bg-purple-500/10 text-purple-700 border-purple-500/20"
+                                : "bg-blue-500/10 text-blue-700 border-blue-500/20"
+                            }`}
+                          >
+                            {isLabCourse ? "Lab" : "Theory"}
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px] bg-muted/60 text-muted-foreground font-medium">
+                            {c.credits} Credits
+                          </Badge>
+                        </div>
+                        <Badge variant="secondary" className="text-[11px] font-bold bg-primary/10 text-primary">
+                          {c.section}
+                        </Badge>
+                      </div>
+
+                      {/* Course Title */}
+                      <h3 className="font-bold text-sm text-foreground mb-3 line-clamp-1">
+                        {c.courseName}
+                      </h3>
+
+                      {/* Details Grid */}
+                      <div className="grid grid-cols-2 gap-2 text-xs py-2.5 px-3 rounded-lg bg-muted/20 border border-border/30">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] uppercase font-bold text-muted-foreground">Department &amp; Sem</span>
+                          <span className="font-semibold text-foreground">
+                            {c.department} &bull; Sem {c.semester}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] uppercase font-bold text-muted-foreground">Weekly Periods</span>
+                          <span className="font-semibold text-foreground">
+                            {c.periodsPerWeek} {c.periodsPerWeek === 1 ? "Period" : "Periods"}/week
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] uppercase font-bold text-muted-foreground">Assigned Room(s)</span>
+                          <span className="font-semibold text-foreground flex items-center gap-1">
+                            <MapPin className="size-3 text-muted-foreground inline" />
+                            {c.roomNo || "Room A-302"}
+                          </span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] uppercase font-bold text-muted-foreground">Student Roster</span>
+                          <span className="font-semibold text-foreground">
+                            {c.hasEnrollmentData && c.studentCount > 0 ? (
+                              <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 border-emerald-500/20 font-bold px-1.5 py-0">
+                                {c.studentCount} Students
+                              </Badge>
+                            ) : (
+                              <span className="text-[11px] text-amber-600 italic">
+                                Enrollment data unavailable
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-border/30">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedClassForRoster(c);
+                          setRosterSearch("");
+                          setRosterModalOpen(true);
+                        }}
+                        className="flex-1 h-8 text-xs font-semibold rounded-lg gap-1.5 border-border/60 hover:bg-muted/40"
+                      >
+                        <Users className="size-3.5 text-muted-foreground" />
+                        View Students
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          navigate({ to: "/anits/timetable" });
+                        }}
+                        className="flex-1 h-8 text-xs font-semibold rounded-lg gap-1.5 border-border/60 hover:bg-muted/40"
+                      >
+                        <Calendar className="size-3.5 text-muted-foreground" />
+                        View Timetable
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          navigate({
+                            to: "/anits/attendance",
+                            search: {
+                              timetableId: c.timetableId,
+                              tab: "mark",
+                            },
+                          });
+                        }}
+                        className="flex-1 h-8 text-xs font-semibold rounded-lg gap-1.5 bg-[#0A1128] hover:bg-[#121B3B] text-white shadow-xs"
+                      >
+                        <UserCheck className="size-3.5" />
+                        Take Attendance
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 5. View Students Roster Modal */}
+      <Dialog open={rosterModalOpen} onOpenChange={setRosterModalOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-6 rounded-2xl">
+          <DialogHeader className="pb-3 border-b border-border/40">
+            <div className="flex items-center gap-2">
+              <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+                <BookOpen className="size-4 text-primary" />
+                Class Roster &bull; {selectedClassForRoster?.courseCode} — {selectedClassForRoster?.courseName}
+              </DialogTitle>
+              <Badge variant="outline" className="text-[10px] font-bold bg-primary/10 text-primary">
+                {selectedClassForRoster?.section}
+              </Badge>
+            </div>
+            <DialogDescription className="text-xs text-muted-foreground mt-1">
+              Showing enrolled students for {selectedClassForRoster?.department} Semester {selectedClassForRoster?.semester} ({selectedClassForRoster?.section}) from PostgreSQL.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Search inside Modal */}
+          <div className="py-3 flex items-center justify-between gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+              <Input
+                value={rosterSearch}
+                onChange={(e) => setRosterSearch(e.target.value)}
+                placeholder="Search students by name, roll number, email..."
+                className="h-8 pl-8 text-xs rounded-lg border-border/60 bg-background"
+              />
+            </div>
+            <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+              {filteredRosterStudents.length} of {studentsInSelectedClass.length} Students
+            </span>
+          </div>
+
+          {/* Students Table */}
+          <div className="flex-1 overflow-y-auto border border-border/40 rounded-xl">
+            {studentsInSelectedClass.length === 0 ? (
+              <div className="p-12 text-center text-xs text-muted-foreground space-y-2">
+                <Users className="size-8 text-muted-foreground/40 mx-auto" />
+                <p className="font-semibold text-foreground">Enrollment data currently unavailable</p>
+                <p className="text-[11px]">
+                  No student records were found matching {selectedClassForRoster?.department} Semester {selectedClassForRoster?.semester} {selectedClassForRoster?.section}.
+                </p>
+              </div>
+            ) : filteredRosterStudents.length === 0 ? (
+              <div className="p-12 text-center text-xs text-muted-foreground">
+                <p className="font-semibold text-foreground">No students matched "{rosterSearch}"</p>
+              </div>
+            ) : (
+              <table className="w-full text-xs text-left">
+                <thead className="bg-muted/30 text-muted-foreground font-semibold border-b border-border/40 sticky top-0 bg-background z-10">
+                  <tr>
+                    <th className="px-4 py-2.5">Roll No</th>
+                    <th className="px-4 py-2.5">Student Name</th>
+                    <th className="px-4 py-2.5">Email</th>
+                    <th className="px-4 py-2.5 text-center">Attendance</th>
+                    <th className="px-4 py-2.5 text-center">CGPA</th>
+                    <th className="px-4 py-2.5 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/40 font-medium">
+                  {filteredRosterStudents.map((s) => {
+                    const attPct = s.attendance?.percentage ?? 85;
+                    const isShortage = attPct < 75;
+                    return (
+                      <tr key={s.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="px-4 py-2.5 font-mono font-bold text-foreground">
+                          {s.rollNumber}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <div className="size-6 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[10px]">
+                              {s.name.slice(0, 1)}
+                            </div>
+                            <span className="font-semibold text-foreground">{s.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground text-[11px]">
+                          {s.email}
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] font-bold ${
+                              isShortage
+                                ? "bg-amber-500/10 text-amber-700 border-amber-500/20"
+                                : "bg-emerald-500/10 text-emerald-700 border-emerald-500/20"
+                            }`}
+                          >
+                            {attPct}%
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2.5 text-center font-semibold text-foreground">
+                          {s.cgpa.toFixed(2)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                          >
+                            {s.status}
+                          </Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="pt-3 flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setRosterModalOpen(false)}
+              className="text-xs rounded-lg"
+            >
+              Close Roster
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function AnitsClassesAndCohortsPage() {
+  const { role } = useRole();
+  const normRole = (role || "").toLowerCase();
+  const isAdmin = ["super_admin", "superadmin", "admin", "principal", "academic_dean"].includes(normRole);
+
+  if (!isAdmin) {
+    return <FacultyMyClassesWorkspace />;
+  }
+
+  return <AdminClassesAndCohortsDirectory />;
+}
+
+// =========================================================================
+// SUPER ADMIN: INSTITUTION-WIDE CLASSES & STUDENT COHORTS DIRECTORY
+// =========================================================================
+function AdminClassesAndCohortsDirectory() {
   const searchParams = Route.useSearch();
   const { role, department } = useRole();
 

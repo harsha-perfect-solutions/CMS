@@ -110,7 +110,7 @@ export function AnitsShell({
 
         {/* Main Body Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 bg-muted/15 overflow-y-auto">
-          <div className="mx-auto max-w-7xl">
+          <div className={cn("mx-auto w-full", pathname.includes("/timetable") ? "max-w-none" : "max-w-7xl")}>
             {children}
           </div>
         </main>

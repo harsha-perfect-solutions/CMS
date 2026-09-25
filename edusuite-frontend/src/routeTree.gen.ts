@@ -83,6 +83,7 @@ import { Route as AiAnalyticsSettingsRouteImport } from './routes/ai-analytics.s
 import { Route as AiAnalyticsStudentRiskRouteImport } from './routes/ai-analytics.student-risk'
 import { Route as AnitsAttendanceRouteImport } from './routes/anits.attendance'
 import { Route as AnitsDashboardRouteImport } from './routes/anits.dashboard'
+import { Route as AnitsExamNotificationsRouteImport } from './routes/anits.exam-notifications'
 import { Route as AnitsFacultyRouteImport } from './routes/anits.faculty'
 import { Route as AnitsForgotPasswordRouteImport } from './routes/anits.forgot-password'
 import { Route as AnitsLoginRouteImport } from './routes/anits.login'
@@ -160,6 +161,7 @@ import { Route as FinanceReportsRouteImport } from './routes/finance.reports'
 import { Route as HodIndexRouteImport } from './routes/hod.index'
 import { Route as HodAttendanceRouteImport } from './routes/hod.attendance'
 import { Route as HodDashboardRouteImport } from './routes/hod.dashboard'
+import { Route as HodExamNotificationsRouteImport } from './routes/hod.exam-notifications'
 import { Route as HodFacultyRouteImport } from './routes/hod.faculty'
 import { Route as HodReportsRouteImport } from './routes/hod.reports'
 import { Route as HrIndexRouteImport } from './routes/hr.index'
@@ -249,6 +251,7 @@ import { Route as SuperAdminCoursesRouteImport } from './routes/super-admin.cour
 import { Route as SuperAdminDashboardRouteImport } from './routes/super-admin.dashboard'
 import { Route as SuperAdminEmergencyRouteImport } from './routes/super-admin.emergency'
 import { Route as SuperAdminEmergencyAlertsRouteImport } from './routes/super-admin.emergency-alerts'
+import { Route as SuperAdminExamNotificationsRouteImport } from './routes/super-admin.exam-notifications'
 import { Route as SuperAdminFacultyRouteImport } from './routes/super-admin.faculty'
 import { Route as SuperAdminFacultyStatusRouteImport } from './routes/super-admin.faculty-status'
 import { Route as SuperAdminLmsRouteImport } from './routes/super-admin.lms'
@@ -1028,6 +1031,11 @@ const AnitsDashboardRoute = AnitsDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AnitsRoute,
 } as any)
+const AnitsExamNotificationsRoute = AnitsExamNotificationsRouteImport.update({
+  id: '/exam-notifications',
+  path: '/exam-notifications',
+  getParentRoute: () => AnitsRoute,
+} as any)
 const AnitsFacultyRoute = AnitsFacultyRouteImport.update({
   id: '/faculty',
   path: '/faculty',
@@ -1417,6 +1425,11 @@ const HodAttendanceRoute = HodAttendanceRouteImport.update({
 const HodDashboardRoute = HodDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => HodRoute,
+} as any)
+const HodExamNotificationsRoute = HodExamNotificationsRouteImport.update({
+  id: '/exam-notifications',
+  path: '/exam-notifications',
   getParentRoute: () => HodRoute,
 } as any)
 const HodFacultyRoute = HodFacultyRouteImport.update({
@@ -1870,6 +1883,12 @@ const SuperAdminEmergencyAlertsRoute =
   SuperAdminEmergencyAlertsRouteImport.update({
     id: '/emergency-alerts',
     path: '/emergency-alerts',
+    getParentRoute: () => SuperAdminRoute,
+  } as any)
+const SuperAdminExamNotificationsRoute =
+  SuperAdminExamNotificationsRouteImport.update({
+    id: '/exam-notifications',
+    path: '/exam-notifications',
     getParentRoute: () => SuperAdminRoute,
   } as any)
 const SuperAdminFacultyRoute = SuperAdminFacultyRouteImport.update({
@@ -4277,6 +4296,7 @@ export interface FileRoutesByFullPath {
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
   '/anits/attendance': typeof AnitsAttendanceRoute
   '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/exam-notifications': typeof AnitsExamNotificationsRoute
   '/anits/faculty': typeof AnitsFacultyRoute
   '/anits/forgot-password': typeof AnitsForgotPasswordRoute
   '/anits/login': typeof AnitsLoginRoute
@@ -4346,6 +4366,7 @@ export interface FileRoutesByFullPath {
   '/finance/reports': typeof FinanceReportsRoute
   '/hod/attendance': typeof HodAttendanceRoute
   '/hod/dashboard': typeof HodDashboardRoute
+  '/hod/exam-notifications': typeof HodExamNotificationsRoute
   '/hod/faculty': typeof HodFacultyRoute
   '/hod/reports': typeof HodReportsRoute
   '/hr/dashboard': typeof HrDashboardRoute
@@ -4426,6 +4447,7 @@ export interface FileRoutesByFullPath {
   '/super-admin/dashboard': typeof SuperAdminDashboardRoute
   '/super-admin/emergency': typeof SuperAdminEmergencyRoute
   '/super-admin/emergency-alerts': typeof SuperAdminEmergencyAlertsRoute
+  '/super-admin/exam-notifications': typeof SuperAdminExamNotificationsRoute
   '/super-admin/faculty': typeof SuperAdminFacultyRoute
   '/super-admin/faculty-status': typeof SuperAdminFacultyStatusRoute
   '/super-admin/lms': typeof SuperAdminLmsRoute
@@ -4905,6 +4927,7 @@ export interface FileRoutesByTo {
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
   '/anits/attendance': typeof AnitsAttendanceRoute
   '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/exam-notifications': typeof AnitsExamNotificationsRoute
   '/anits/faculty': typeof AnitsFacultyRoute
   '/anits/forgot-password': typeof AnitsForgotPasswordRoute
   '/anits/login': typeof AnitsLoginRoute
@@ -4973,6 +4996,7 @@ export interface FileRoutesByTo {
   '/finance/reports': typeof FinanceReportsRoute
   '/hod/attendance': typeof HodAttendanceRoute
   '/hod/dashboard': typeof HodDashboardRoute
+  '/hod/exam-notifications': typeof HodExamNotificationsRoute
   '/hod/faculty': typeof HodFacultyRoute
   '/hod/reports': typeof HodReportsRoute
   '/hr/dashboard': typeof HrDashboardRoute
@@ -5045,6 +5069,7 @@ export interface FileRoutesByTo {
   '/super-admin/dashboard': typeof SuperAdminDashboardRoute
   '/super-admin/emergency': typeof SuperAdminEmergencyRoute
   '/super-admin/emergency-alerts': typeof SuperAdminEmergencyAlertsRoute
+  '/super-admin/exam-notifications': typeof SuperAdminExamNotificationsRoute
   '/super-admin/faculty': typeof SuperAdminFacultyRoute
   '/super-admin/faculty-status': typeof SuperAdminFacultyStatusRoute
   '/super-admin/lms': typeof SuperAdminLmsRoute
@@ -5544,6 +5569,7 @@ export interface FileRoutesById {
   '/ai-analytics/student-risk': typeof AiAnalyticsStudentRiskRoute
   '/anits/attendance': typeof AnitsAttendanceRoute
   '/anits/dashboard': typeof AnitsDashboardRoute
+  '/anits/exam-notifications': typeof AnitsExamNotificationsRoute
   '/anits/faculty': typeof AnitsFacultyRoute
   '/anits/forgot-password': typeof AnitsForgotPasswordRoute
   '/anits/login': typeof AnitsLoginRoute
@@ -5613,6 +5639,7 @@ export interface FileRoutesById {
   '/finance/reports': typeof FinanceReportsRoute
   '/hod/attendance': typeof HodAttendanceRoute
   '/hod/dashboard': typeof HodDashboardRoute
+  '/hod/exam-notifications': typeof HodExamNotificationsRoute
   '/hod/faculty': typeof HodFacultyRoute
   '/hod/reports': typeof HodReportsRoute
   '/hr/dashboard': typeof HrDashboardRoute
@@ -5693,6 +5720,7 @@ export interface FileRoutesById {
   '/super-admin/dashboard': typeof SuperAdminDashboardRoute
   '/super-admin/emergency': typeof SuperAdminEmergencyRoute
   '/super-admin/emergency-alerts': typeof SuperAdminEmergencyAlertsRoute
+  '/super-admin/exam-notifications': typeof SuperAdminExamNotificationsRoute
   '/super-admin/faculty': typeof SuperAdminFacultyRoute
   '/super-admin/faculty-status': typeof SuperAdminFacultyStatusRoute
   '/super-admin/lms': typeof SuperAdminLmsRoute
@@ -6193,6 +6221,7 @@ export interface FileRouteTypes {
     | '/ai-analytics/student-risk'
     | '/anits/attendance'
     | '/anits/dashboard'
+    | '/anits/exam-notifications'
     | '/anits/faculty'
     | '/anits/forgot-password'
     | '/anits/login'
@@ -6262,6 +6291,7 @@ export interface FileRouteTypes {
     | '/finance/reports'
     | '/hod/attendance'
     | '/hod/dashboard'
+    | '/hod/exam-notifications'
     | '/hod/faculty'
     | '/hod/reports'
     | '/hr/dashboard'
@@ -6342,6 +6372,7 @@ export interface FileRouteTypes {
     | '/super-admin/dashboard'
     | '/super-admin/emergency'
     | '/super-admin/emergency-alerts'
+    | '/super-admin/exam-notifications'
     | '/super-admin/faculty'
     | '/super-admin/faculty-status'
     | '/super-admin/lms'
@@ -6821,6 +6852,7 @@ export interface FileRouteTypes {
     | '/ai-analytics/student-risk'
     | '/anits/attendance'
     | '/anits/dashboard'
+    | '/anits/exam-notifications'
     | '/anits/faculty'
     | '/anits/forgot-password'
     | '/anits/login'
@@ -6889,6 +6921,7 @@ export interface FileRouteTypes {
     | '/finance/reports'
     | '/hod/attendance'
     | '/hod/dashboard'
+    | '/hod/exam-notifications'
     | '/hod/faculty'
     | '/hod/reports'
     | '/hr/dashboard'
@@ -6961,6 +6994,7 @@ export interface FileRouteTypes {
     | '/super-admin/dashboard'
     | '/super-admin/emergency'
     | '/super-admin/emergency-alerts'
+    | '/super-admin/exam-notifications'
     | '/super-admin/faculty'
     | '/super-admin/faculty-status'
     | '/super-admin/lms'
@@ -7459,6 +7493,7 @@ export interface FileRouteTypes {
     | '/ai-analytics/student-risk'
     | '/anits/attendance'
     | '/anits/dashboard'
+    | '/anits/exam-notifications'
     | '/anits/faculty'
     | '/anits/forgot-password'
     | '/anits/login'
@@ -7528,6 +7563,7 @@ export interface FileRouteTypes {
     | '/finance/reports'
     | '/hod/attendance'
     | '/hod/dashboard'
+    | '/hod/exam-notifications'
     | '/hod/faculty'
     | '/hod/reports'
     | '/hr/dashboard'
@@ -7608,6 +7644,7 @@ export interface FileRouteTypes {
     | '/super-admin/dashboard'
     | '/super-admin/emergency'
     | '/super-admin/emergency-alerts'
+    | '/super-admin/exam-notifications'
     | '/super-admin/faculty'
     | '/super-admin/faculty-status'
     | '/super-admin/lms'
@@ -8621,6 +8658,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AnitsDashboardRouteImport
       parentRoute: typeof AnitsRoute
     }
+    '/anits/exam-notifications': {
+      id: '/anits/exam-notifications'
+      path: '/exam-notifications'
+      fullPath: '/anits/exam-notifications'
+      preLoaderRoute: typeof AnitsExamNotificationsRouteImport
+      parentRoute: typeof AnitsRoute
+    }
     '/anits/faculty': {
       id: '/anits/faculty'
       path: '/faculty'
@@ -9158,6 +9202,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/hod/dashboard'
       preLoaderRoute: typeof HodDashboardRouteImport
+      parentRoute: typeof HodRoute
+    }
+    '/hod/exam-notifications': {
+      id: '/hod/exam-notifications'
+      path: '/exam-notifications'
+      fullPath: '/hod/exam-notifications'
+      preLoaderRoute: typeof HodExamNotificationsRouteImport
       parentRoute: typeof HodRoute
     }
     '/hod/faculty': {
@@ -9781,6 +9832,13 @@ declare module '@tanstack/react-router' {
       path: '/emergency-alerts'
       fullPath: '/super-admin/emergency-alerts'
       preLoaderRoute: typeof SuperAdminEmergencyAlertsRouteImport
+      parentRoute: typeof SuperAdminRoute
+    }
+    '/super-admin/exam-notifications': {
+      id: '/super-admin/exam-notifications'
+      path: '/exam-notifications'
+      fullPath: '/super-admin/exam-notifications'
+      preLoaderRoute: typeof SuperAdminExamNotificationsRouteImport
       parentRoute: typeof SuperAdminRoute
     }
     '/super-admin/faculty': {
@@ -12652,6 +12710,7 @@ const AiAnalyticsRouteWithChildren = AiAnalyticsRoute._addFileChildren(
 interface AnitsRouteChildren {
   AnitsAttendanceRoute: typeof AnitsAttendanceRoute
   AnitsDashboardRoute: typeof AnitsDashboardRoute
+  AnitsExamNotificationsRoute: typeof AnitsExamNotificationsRoute
   AnitsFacultyRoute: typeof AnitsFacultyRoute
   AnitsForgotPasswordRoute: typeof AnitsForgotPasswordRoute
   AnitsLoginRoute: typeof AnitsLoginRoute
@@ -12666,6 +12725,7 @@ interface AnitsRouteChildren {
 const AnitsRouteChildren: AnitsRouteChildren = {
   AnitsAttendanceRoute: AnitsAttendanceRoute,
   AnitsDashboardRoute: AnitsDashboardRoute,
+  AnitsExamNotificationsRoute: AnitsExamNotificationsRoute,
   AnitsFacultyRoute: AnitsFacultyRoute,
   AnitsForgotPasswordRoute: AnitsForgotPasswordRoute,
   AnitsLoginRoute: AnitsLoginRoute,
@@ -12924,6 +12984,7 @@ const FinanceRouteWithChildren =
 interface HodRouteChildren {
   HodAttendanceRoute: typeof HodAttendanceRoute
   HodDashboardRoute: typeof HodDashboardRoute
+  HodExamNotificationsRoute: typeof HodExamNotificationsRoute
   HodFacultyRoute: typeof HodFacultyRoute
   HodReportsRoute: typeof HodReportsRoute
   HodIndexRoute: typeof HodIndexRoute
@@ -12932,6 +12993,7 @@ interface HodRouteChildren {
 const HodRouteChildren: HodRouteChildren = {
   HodAttendanceRoute: HodAttendanceRoute,
   HodDashboardRoute: HodDashboardRoute,
+  HodExamNotificationsRoute: HodExamNotificationsRoute,
   HodFacultyRoute: HodFacultyRoute,
   HodReportsRoute: HodReportsRoute,
   HodIndexRoute: HodIndexRoute,
@@ -14142,6 +14204,7 @@ interface SuperAdminRouteChildren {
   SuperAdminDashboardRoute: typeof SuperAdminDashboardRoute
   SuperAdminEmergencyRoute: typeof SuperAdminEmergencyRoute
   SuperAdminEmergencyAlertsRoute: typeof SuperAdminEmergencyAlertsRoute
+  SuperAdminExamNotificationsRoute: typeof SuperAdminExamNotificationsRoute
   SuperAdminFacultyRoute: typeof SuperAdminFacultyRoute
   SuperAdminFacultyStatusRoute: typeof SuperAdminFacultyStatusRoute
   SuperAdminLmsRoute: typeof SuperAdminLmsRoute
@@ -14165,6 +14228,7 @@ const SuperAdminRouteChildren: SuperAdminRouteChildren = {
   SuperAdminDashboardRoute: SuperAdminDashboardRoute,
   SuperAdminEmergencyRoute: SuperAdminEmergencyRoute,
   SuperAdminEmergencyAlertsRoute: SuperAdminEmergencyAlertsRoute,
+  SuperAdminExamNotificationsRoute: SuperAdminExamNotificationsRoute,
   SuperAdminFacultyRoute: SuperAdminFacultyRoute,
   SuperAdminFacultyStatusRoute: SuperAdminFacultyStatusRoute,
   SuperAdminLmsRoute: SuperAdminLmsRoute,

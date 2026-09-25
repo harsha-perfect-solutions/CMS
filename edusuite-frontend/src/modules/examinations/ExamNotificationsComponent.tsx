@@ -29,14 +29,12 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 
-const HISTORY = [
-  { id: 1, type: "Email & SMS", audience: "Semester 6 CSE", subject: "Hall Tickets Released", date: "Aug 5, 2026", status: "Sent" },
-  { id: 2, type: "In-App", audience: "All Students", subject: "Exam Schedule Published", date: "Aug 1, 2026", status: "Sent" },
-  { id: 3, type: "Email", audience: "ME Dept", subject: "Revaluation Deadline Reminder", date: "Jul 28, 2026", status: "Sent" },
-];
+import api from "@/lib/api";
 
 export function ExamNotificationsComponent() {
   const [isSending, setIsSending] = useState(false);
+  const [historyList, setHistoryList] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [form, setForm] = useState({
     audience: "all_students",
     channels: { email: true, sms: false, inApp: true },
@@ -44,18 +42,48 @@ export function ExamNotificationsComponent() {
     message: "",
   });
 
-  const handleSend = (e: React.FormEvent) => {
+  const fetchHistory = async () => {
+    try {
+      setIsLoadingHistory(true);
+      const res = await api.get("/api/notifications");
+      const list = Array.isArray(res.data) ? res.data : (res.data?.notifications || []);
+      // Filter notifications that are broadcasts or announcements
+      const broadcasts = list.filter((n: any) => 
+        n.type === "EXAM_BROADCAST" || n.type === "EXAM_ANNOUNCEMENT" || n.metadata?.broadcastBy
+      );
+      setHistoryList(broadcasts.length > 0 ? broadcasts : list.slice(0, 10));
+    } catch (err) {
+      console.error("Failed to load broadcast history:", err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.channels.email && !form.channels.sms && !form.channels.inApp) {
       return toast.error("Please select at least one communication channel.");
     }
     
     setIsSending(true);
-    setTimeout(() => {
-      setIsSending(false);
-      toast.success("Broadcast successfully dispatched to the selected audience.");
+    try {
+      const res = await api.post("/api/notifications/broadcast", {
+        audience: form.audience,
+        subject: form.subject,
+        message: form.message,
+      });
+      toast.success(res.data?.message || "Broadcast successfully dispatched to the selected audience.");
       setForm({ ...form, subject: "", message: "" });
-    }, 1500);
+      fetchHistory();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "Failed to dispatch broadcast.");
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -146,32 +174,52 @@ export function ExamNotificationsComponent() {
 
         <TabsContent value="history" className="mt-0">
           <div className="rounded-2xl border border-border/80 bg-card p-0 shadow-sm overflow-hidden">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-muted/40 border-b border-border text-muted-foreground font-semibold uppercase tracking-wider text-[0.68rem]">
-                <tr>
-                  <th className="py-3 px-4">Date Sent</th>
-                  <th className="py-3 px-4">Subject</th>
-                  <th className="py-3 px-4">Audience</th>
-                  <th className="py-3 px-4">Channels</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
-                {HISTORY.map((h) => (
-                  <tr key={h.id} className="hover:bg-muted/20 transition-colors">
-                    <td className="py-3 px-4 text-muted-foreground font-medium">{h.date}</td>
-                    <td className="py-3 px-4 font-semibold text-foreground">{h.subject}</td>
-                    <td className="py-3 px-4">{h.audience}</td>
-                    <td className="py-3 px-4 text-muted-foreground">{h.type}</td>
-                    <td className="py-3 px-4 text-center">
-                      <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 gap-1 font-mono">
-                        <CheckCircle2 className="size-3" /> {h.status}
-                      </Badge>
-                    </td>
+            {isLoadingHistory ? (
+              <div className="p-8 text-center text-xs text-muted-foreground animate-pulse">
+                Loading broadcast history...
+              </div>
+            ) : historyList.length === 0 ? (
+              <div className="p-8 text-center text-xs text-muted-foreground">
+                No broadcast messages dispatched yet.
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs">
+                <thead className="bg-muted/40 border-b border-border text-muted-foreground font-semibold uppercase tracking-wider text-[0.68rem]">
+                  <tr>
+                    <th className="py-3 px-4">Date Sent</th>
+                    <th className="py-3 px-4">Subject</th>
+                    <th className="py-3 px-4">Audience</th>
+                    <th className="py-3 px-4">Type / Channel</th>
+                    <th className="py-3 px-4 text-center">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {historyList.map((h) => (
+                    <tr key={h.id} className="hover:bg-muted/20 transition-colors">
+                      <td className="py-3 px-4 text-muted-foreground font-medium">
+                        {new Date(h.createdAt).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
+                      </td>
+                      <td className="py-3 px-4 font-semibold text-foreground">{h.title}</td>
+                      <td className="py-3 px-4 capitalize">
+                        {h.metadata?.audience?.replace("_", " ") || h.role || "Institution"}
+                      </td>
+                      <td className="py-3 px-4 text-muted-foreground font-mono text-[11px]">
+                        {h.type}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 gap-1 font-mono">
+                          <CheckCircle2 className="size-3" /> Dispatched
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </TabsContent>
       </Tabs>

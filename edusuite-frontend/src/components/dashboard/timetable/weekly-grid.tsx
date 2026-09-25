@@ -1,438 +1,309 @@
-import { Clock, MapPin, Building2, Coffee, BookOpen, FlaskConical, MessageSquare, FolderGit2, Users, CalendarClock } from "lucide-react";
+import React from "react";
 import { Badge } from "@/components/ui/badge";
-import { Panel } from "@/components/dashboard/panel";
-import type { WeeklySlot, WeeklySlotType } from "@/data/faculty-mock-data";
-import { TIME_SLOTS, LUNCH_SLOT } from "@/data/faculty-mock-data";
-import { cn } from "@/lib/utils";
+import { BookOpen, FlaskConical, MapPin, Layers } from "lucide-react";
+import type { WeeklySlot } from "@/services/FacultyTimetableService";
 
 interface WeeklyGridProps {
   slots: WeeklySlot[];
 }
 
-// ─── Colour config per class type ────────────────────────────────────────────
-const TYPE_CONFIG: Record<
-  WeeklySlotType,
-  {
-    bg: string;
-    border: string;
-    text: string;
-    badge: string;
-    icon: React.ElementType;
-    badgeText: string;
-  }
-> = {
-  Theory: {
-    bg: "bg-blue-500/8 hover:bg-blue-500/15",
-    border: "border-l-4 border-l-blue-500 border border-blue-500/10",
-    text: "text-blue-700 dark:text-blue-300",
-    badge: "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/20",
-    icon: BookOpen,
-    badgeText: "Theory",
-  },
-  Lab: {
-    bg: "bg-emerald-500/8 hover:bg-emerald-500/15",
-    border: "border-l-4 border-l-emerald-500 border border-emerald-500/10",
-    text: "text-emerald-700 dark:text-emerald-300",
-    badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/20",
-    icon: FlaskConical,
-    badgeText: "Lab",
-  },
-  Tutorial: {
-    bg: "bg-violet-500/8 hover:bg-violet-500/15",
-    border: "border-l-4 border-l-violet-500 border border-violet-500/10",
-    text: "text-violet-700 dark:text-violet-300",
-    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/20",
-    icon: MessageSquare,
-    badgeText: "Tutorial",
-  },
-  Project: {
-    bg: "bg-amber-500/8 hover:bg-amber-500/15",
-    border: "border-l-4 border-l-amber-500 border border-amber-500/10",
-    text: "text-amber-700 dark:text-amber-300",
-    badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/20",
-    icon: FolderGit2,
-    badgeText: "Project",
-  },
-  Seminar: {
-    bg: "bg-rose-500/8 hover:bg-rose-500/15",
-    border: "border-l-4 border-l-rose-500 border border-rose-500/10",
-    text: "text-rose-700 dark:text-rose-300",
-    badge: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/20",
-    icon: Users,
-    badgeText: "Seminar",
-  },
-  Mentoring: {
-    bg: "bg-teal-500/8 hover:bg-teal-500/15",
-    border: "border-l-4 border-l-teal-500 border border-teal-500/10",
-    text: "text-teal-700 dark:text-teal-300",
-    badge: "bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/20",
-    icon: Users,
-    badgeText: "Mentoring",
-  },
-  "Dept. Meeting": {
-    bg: "bg-indigo-500/8 hover:bg-indigo-500/15",
-    border: "border-l-4 border-l-indigo-500 border border-indigo-500/10",
-    text: "text-indigo-700 dark:text-indigo-300",
-    badge: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/20",
-    icon: CalendarClock,
-    badgeText: "Dept. Mtg",
-  },
-};
+const DAYS = [
+  { key: "Monday", shortName: "MON" },
+  { key: "Tuesday", shortName: "TUE" },
+  { key: "Wednesday", shortName: "WED" },
+  { key: "Thursday", shortName: "THU" },
+  { key: "Friday", shortName: "FRI" },
+  { key: "Saturday", shortName: "SAT" },
+];
 
-// ─── Determine current day & detect ongoing slot ─────────────────────────────
-function getCurrentDay(): WeeklySlot["day"] | null {
-  const dayMap: Record<number, WeeklySlot["day"]> = {
-    1: "Monday",
-    2: "Tuesday",
-    3: "Wednesday",
-    4: "Thursday",
-    5: "Friday",
-    6: "Saturday",
-  };
-  return dayMap[new Date().getDay()] ?? null;
-}
-
-function parseToMins(tStr: string): number {
-  const match = tStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
-  if (!match) {
-    const parts = tStr.split(":");
-    return parseInt(parts[0] || "0") * 60 + parseInt(parts[1] || "0");
-  }
-  let hrs = parseInt(match[1] || "0");
-  const mins = parseInt(match[2] || "0");
-  const ampm = match[3];
-  if (ampm) {
-    if (ampm.toUpperCase() === "PM" && hrs < 12) hrs += 12;
-    if (ampm.toUpperCase() === "AM" && hrs === 12) hrs = 0;
-  }
-  return hrs * 60 + mins;
-}
-
-function isSlotOngoing(slot: WeeklySlot): boolean {
-  const now = new Date();
-  const [startPart, endPart] = slot.timeSlot.split(" - ");
-  if (!startPart || !endPart) return false;
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  const startMins = parseToMins(startPart);
-  const endMins = parseToMins(endPart);
-  return nowMins >= startMins && nowMins < endMins;
-}
-
-function isLunchOngoing(): boolean {
-  const [startPart, endPart] = LUNCH_SLOT.split(" - ");
-  const [startH, startM] = (startPart ?? "").split(":").map(Number);
-  const [endH, endM] = (endPart ?? "").split(":").map(Number);
-  const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  return nowMins >= (startH ?? 0) * 60 + (startM ?? 0) && nowMins < (endH ?? 0) * 60 + (endM ?? 0);
-}
-
-function isTimeSlotActive(timeSlot: string): boolean {
-  const [start, end] = timeSlot.split(" - ");
-  if (!start || !end) return false;
-  const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  const startMins = parseToMins(start);
-  const endMins = parseToMins(end);
-  return nowMins >= startMins && nowMins < endMins;
-}
-
-// ─── Class card inside a cell ─────────────────────────────────────────────────
-function ClassCard({ cell, ongoing, isUpcoming }: { cell: WeeklySlot; ongoing: boolean; isUpcoming: boolean }) {
-  const cfg = TYPE_CONFIG[cell.type] ?? TYPE_CONFIG.Theory;
-  const Icon = cfg.icon;
-
-  return (
-    <div
-      className={cn(
-        "rounded-xl p-2.5 h-full flex flex-col gap-1 transition-all duration-300 cursor-default select-none border",
-        cfg.bg,
-        cfg.border,
-        ongoing && "ring-2 ring-offset-1 ring-primary/60 shadow-glow",
-        isUpcoming && "ring-2 ring-offset-1 ring-blue-500/40 shadow-glow"
-      )}
-    >
-      {/* Top row: type badge + ongoing / upcoming pill */}
-      <div className="flex items-center justify-between gap-1 flex-wrap">
-        <Badge
-          variant="outline"
-          className={cn("px-1.5 py-0 text-[0.52rem] font-bold rounded-lg border", cfg.badge)}
-        >
-          <Icon className="size-2.5 mr-0.5" />
-          {cfg.badgeText}
-        </Badge>
-        {ongoing && (
-          <span className="text-[0.48rem] font-black uppercase tracking-widest bg-primary text-primary-foreground px-1.5 py-0.5 rounded-full animate-pulse">
-            LIVE
-          </span>
-        )}
-        {isUpcoming && (
-          <span className="text-[0.48rem] font-black uppercase tracking-widest bg-blue-600 text-white px-1.5 py-0.5 rounded-full">
-            UPCOMING
-          </span>
-        )}
-      </div>
-
-      {/* Subject name */}
-      <h5 className={cn("font-extrabold leading-tight text-[0.68rem] line-clamp-2", cfg.text)}>
-        {cell.subject}
-      </h5>
-
-      {/* Code + Section */}
-      <p className="text-[0.55rem] text-muted-foreground font-bold font-mono">
-        {cell.code} · Sec {cell.section}
-      </p>
-
-      {/* Room + Building */}
-      <div className={cn("flex justify-between items-center text-[0.52rem] font-semibold opacity-75 pt-1 border-t mt-auto", cfg.text.replace("text-", "border-").replace("700", "500/20").replace("300", "500/20"))}>
-        <span className="flex items-center gap-0.5 truncate max-w-[50%]">
-          <MapPin className="size-2.5 shrink-0" />
-          {cell.room}
-        </span>
-        <span className="flex items-center gap-0.5 truncate max-w-[50%]">
-          <Building2 className="size-2.5 shrink-0" />
-          {cell.building.replace("Block ", "")}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Lunch cell ───────────────────────────────────────────────────────────────
-function LunchCell({ isCurrentDay, isOngoing }: { isCurrentDay: boolean; isOngoing: boolean }) {
-  return (
-    <div
-      className={cn(
-        "rounded-xl h-full flex flex-col items-center justify-center gap-1 border border-dashed transition-all duration-200",
-        isOngoing && isCurrentDay
-          ? "bg-amber-500/10 border-amber-400/40 ring-2 ring-amber-400/30"
-          : "bg-muted/20 border-border/30"
-      )}
-    >
-      <Coffee
-        className={cn(
-          "size-4",
-          isOngoing && isCurrentDay ? "text-amber-500 animate-bounce" : "text-muted-foreground/30"
-        )}
-      />
-      <span
-        className={cn(
-          "text-[0.52rem] font-black uppercase tracking-widest",
-          isOngoing && isCurrentDay ? "text-amber-600" : "text-muted-foreground/30"
-        )}
-      >
-        Lunch
-      </span>
-    </div>
-  );
-}
-
-// ─── Free period cell ─────────────────────────────────────────────────────────
-function FreePeriodCell({ day, timeSlot }: { day: string; timeSlot: string }) {
-  const subtitles = [
-    "Research",
-    "Student Mentoring",
-    "Paper Evaluation",
-    "Preparation",
-    "Department Work",
-  ];
-  const hash = (day.length + timeSlot.length) % subtitles.length;
-  const subtitle = subtitles[hash] || "Research";
-
-  return (
-    <div className="rounded-xl p-2.5 h-full flex flex-col gap-1 border border-dashed border-border/30 bg-muted/5 hover:bg-muted/10 transition-all select-none justify-center">
-      <div className="flex items-center gap-1.5">
-        <Clock className="size-3 text-muted-foreground/40 shrink-0" />
-        <span className="text-[0.55rem] font-extrabold text-muted-foreground/60 uppercase tracking-wider">
-          Free Period
-        </span>
-      </div>
-      <p className="text-[0.62rem] font-semibold text-muted-foreground/45">
-        {subtitle}
-      </p>
-    </div>
-  );
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 export function WeeklyGrid({ slots }: WeeklyGridProps) {
-  const days: WeeklySlot["day"][] = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
+  // Pastel styling per period slot matching ANITS Master Timetable
+  const getCellCardStyle = (periodNum: number, isLab: boolean) => {
+    if (isLab) {
+      return "bg-[#ECFDF5] border-[#A7F3D0] dark:bg-emerald-950/40 dark:border-emerald-800 text-[#065F46] dark:text-emerald-200";
+    }
+    switch (periodNum) {
+      case 1:
+        return "bg-[#EBF5FF] border-[#BEE3F8] dark:bg-blue-950/40 dark:border-blue-800 text-[#1E40AF] dark:text-blue-200";
+      case 2:
+        return "bg-[#F3E8FF] border-[#E9D5FF] dark:bg-purple-950/40 dark:border-purple-800 text-[#6B21A8] dark:text-purple-200";
+      case 3:
+        return "bg-[#FEF3C7] border-[#FDE68A] dark:bg-amber-950/40 dark:border-amber-800 text-[#92400E] dark:text-amber-200";
+      case 4:
+        return "bg-[#DCFCE7] border-[#BBF7D0] dark:bg-emerald-950/40 dark:border-emerald-800 text-[#166534] dark:text-emerald-200";
+      case 5:
+        return "bg-[#FCE7F3] border-[#FBCFE8] dark:bg-pink-950/40 dark:border-pink-800 text-[#9D174D] dark:text-pink-200";
+      case 6:
+        return "bg-[#E0F2FE] border-[#BAE6FD] dark:bg-cyan-950/40 dark:border-cyan-800 text-[#155E75] dark:text-cyan-200";
+      case 7:
+        return "bg-[#FFEDD5] border-[#FED7AA] dark:bg-orange-950/40 dark:border-orange-800 text-[#9A3412] dark:text-orange-200";
+      default:
+        return "bg-slate-50 border-slate-200 text-slate-900";
+    }
+  };
 
-  const currentDay = getCurrentDay();
-  const lunchOngoing = isLunchOngoing();
+  const renderSlotCell = (dayKey: string, periodNum: number) => {
+    const slot = slots.find(
+      (s) =>
+        s.day.toLowerCase() === dayKey.toLowerCase() &&
+        s.periodNumber === periodNum
+    );
 
-  const getSlot = (day: WeeklySlot["day"], timeSlot: string) =>
-    slots.find((s) => s.day === day && s.timeSlot === timeSlot);
-
-  // Find the upcoming class on the current day
-  const upcomingClass = (() => {
-    if (!currentDay) return null;
-    const todayClasses = slots.filter((s) => s.day === currentDay);
-    const now = new Date();
-    const nowMins = now.getHours() * 60 + now.getMinutes();
-
-    const sortedToday = [...todayClasses].sort((a, b) => {
-      const [aStart] = a.timeSlot.split(" - ");
-      const [bStart] = b.timeSlot.split(" - ");
-      return parseToMins(aStart || "") - parseToMins(bStart || "");
-    });
-
-    return sortedToday.find((s) => {
-      const [start] = s.timeSlot.split(" - ");
-      return parseToMins(start || "") > nowMins;
-    }) || null;
-  })();
-
-  return (
-    <Panel
-      title="Weekly Timetable Grid"
-      description="Live academic schedule with colour-coded classes, labs, tutorials, mentoring & meetings"
-      className="border border-border bg-card rounded-2xl p-5 shadow-card"
-    >
-      {/* Legend strip */}
-      <div className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-border/40">
-        {(Object.keys(TYPE_CONFIG) as WeeklySlotType[]).map((t) => {
-          const cfg = TYPE_CONFIG[t];
-          return (
-            <span
-              key={t}
-              className={cn(
-                "inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[0.55rem] font-bold border",
-                cfg.badge
-              )}
-            >
-              <cfg.icon className="size-2.5" />
-              {cfg.badgeText}
+    if (!slot) {
+      return (
+        <td
+          key={`p${periodNum}`}
+          className="p-1 sm:p-1.5 border-r border-slate-200 dark:border-slate-800 align-middle"
+        >
+          <div className="p-1.5 sm:p-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-800/80 bg-slate-50/40 dark:bg-slate-900/20 text-center flex flex-col justify-center items-center min-h-[80px] overflow-hidden">
+            <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 truncate">
+              Free Period
             </span>
-          );
-        })}
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[0.55rem] font-bold border bg-amber-500/10 text-amber-600 border-amber-400/25">
-          <Coffee className="size-2.5" /> Lunch
-        </span>
-        <span className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[0.55rem] font-black uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">
-          <Clock className="size-2.5" /> Today highlighted
-        </span>
-      </div>
+          </div>
+        </td>
+      );
+    }
 
-      {/* Timetable scroll container */}
-      <div className="overflow-x-auto select-none max-w-full">
-        <div className="min-w-[860px]">
-          {/* ── Header Row ── */}
-          <div
-            className="grid gap-1 mb-1"
-            style={{ gridTemplateColumns: "90px repeat(6, minmax(110px, 1fr))" }}
-          >
-            {/* empty corner */}
-            <div />
-            {days.map((day) => {
-              const isToday = day === currentDay;
-              return (
-                <div
-                  key={day}
-                  className={cn(
-                    "text-center py-2 px-1 rounded-xl text-[0.65rem] font-extrabold tracking-wide transition-colors",
-                    isToday
-                      ? "bg-primary text-primary-foreground shadow-glow"
-                      : "bg-muted/40 text-muted-foreground"
-                  )}
-                >
-                  <span className="block">{day.slice(0, 3).toUpperCase()}</span>
-                  {isToday && (
-                    <span className="text-[0.45rem] font-black opacity-70 uppercase tracking-widest">
-                      TODAY
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+    const isLab = Boolean(slot.isLab || slot.type === "Lab");
+
+    return (
+      <td
+        key={`p${periodNum}`}
+        className="p-1 sm:p-1.5 border-r border-slate-200 dark:border-slate-800 align-middle"
+      >
+        <div
+          className={`p-2 rounded-xl border transition-all text-left space-y-1 min-h-[80px] flex flex-col justify-between overflow-hidden ${getCellCardStyle(
+            periodNum,
+            isLab
+          )}`}
+        >
+          <div>
+            <div className="flex items-center justify-between gap-1 mb-0.5">
+              <span className="font-mono font-bold text-[11px] sm:text-xs text-foreground tracking-tight truncate">
+                {slot.code || "COURSE"}
+              </span>
+              <Badge
+                variant="outline"
+                className={`text-[8px] font-bold px-1 py-0 h-3.5 uppercase shrink-0 ${
+                  isLab
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                    : "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30"
+                }`}
+              >
+                {isLab ? "Lab" : "Theory"}
+              </Badge>
+            </div>
+
+            <div
+              className="text-[10px] sm:text-[11px] font-semibold leading-tight text-foreground line-clamp-2"
+              title={slot.subject}
+            >
+              {slot.subject}
+            </div>
           </div>
 
-          {/* ── Period Rows ── */}
-          <div className="space-y-1">
-            {TIME_SLOTS.map((timeSlot) => {
-              const isLunch = timeSlot === LUNCH_SLOT;
-              const [start, end] = timeSlot.split(" - ");
-              const isSlotActive = isTimeSlotActive(timeSlot);
-
-              return (
-                <div
-                  key={timeSlot}
-                  className="grid gap-1"
-                  style={{ gridTemplateColumns: "90px repeat(6, minmax(110px, 1fr))" }}
-                >
-                  {/* Time label */}
-                  <div
-                    className={cn(
-                      "flex flex-col items-center justify-center text-center rounded-xl px-1 py-1.5 transition-colors border",
-                      isLunch ? "bg-amber-500/10 border-amber-500/20" : isSlotActive ? "bg-primary/10 border-primary/20" : "bg-muted/20 border-transparent"
-                    )}
-                  >
-                    <Clock
-                      className={cn(
-                        "size-3 mb-0.5",
-                        isLunch ? "text-amber-500" : isSlotActive ? "text-primary" : "text-muted-foreground"
-                      )}
-                    />
-                    <span
-                      className={cn(
-                        "font-mono font-bold leading-tight",
-                        isLunch ? "text-amber-600 text-[0.55rem]" : isSlotActive ? "text-primary text-[0.55rem]" : "text-muted-foreground text-[0.52rem]"
-                      )}
-                    >
-                      {start}
-                    </span>
-                    <span
-                      className={cn(
-                        "font-mono leading-tight",
-                        isLunch ? "text-amber-500/70 text-[0.45rem]" : isSlotActive ? "text-primary/70 text-[0.45rem]" : "text-muted-foreground/50 text-[0.45rem]"
-                      )}
-                    >
-                      {end}
-                    </span>
-                  </div>
-
-                  {/* Day cells */}
-                  {days.map((day) => {
-                    const isToday = day === currentDay;
-                    const cell = getSlot(day, timeSlot);
-                    const ongoing = !!cell && isToday && isSlotOngoing(cell);
-                    const isUpcoming = !!cell && isToday && upcomingClass?.timeSlot === cell.timeSlot;
-
-                    return (
-                      <div
-                        key={day}
-                        className={cn(
-                          "rounded-xl transition-all duration-200",
-                          isLunch ? "h-[48px]" : "h-[96px]",
-                          isToday && !isLunch && "ring-1 ring-primary/10"
-                        )}
-                      >
-                        {isLunch ? (
-                          <LunchCell
-                            isCurrentDay={isToday}
-                            isOngoing={lunchOngoing}
-                          />
-                        ) : cell ? (
-                          <ClassCard cell={cell} ongoing={ongoing} isUpcoming={isUpcoming} />
-                        ) : (
-                          <FreePeriodCell day={day} timeSlot={timeSlot} />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
+          <div className="pt-1 border-t border-current/15 flex items-center justify-between text-[9px] sm:text-[10px] font-medium opacity-90 gap-1">
+            <span className="flex items-center gap-0.5 font-semibold truncate min-w-0">
+              <Layers className="size-2.5 shrink-0" />
+              <span className="truncate">{slot.section}</span>
+            </span>
+            <span className="flex items-center gap-0.5 shrink-0">
+              <MapPin className="size-2.5 shrink-0" />
+              <span className="truncate">{slot.room || "—"}</span>
+            </span>
           </div>
         </div>
+      </td>
+    );
+  };
+
+  return (
+    <div className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4 md:p-6 space-y-4 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+        <div>
+          <h3 className="font-display font-bold text-base text-foreground">
+            Weekly Timetable Grid
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Authoritative weekly schedule synchronized with ANITS Master Timetable
+          </p>
+        </div>
+
+        {/* Real Category Legend */}
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/20 text-[10px] font-semibold">
+            <BookOpen className="size-3" /> Theory Lecture
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[10px] font-semibold">
+            <FlaskConical className="size-3" /> Laboratory Practice
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 text-[10px] font-semibold">
+            Free Period
+          </span>
+        </div>
       </div>
-    </Panel>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <table className="w-full table-fixed text-center text-xs border-collapse font-sans bg-white dark:bg-slate-950 min-w-[640px] md:min-w-0">
+          <thead>
+            {/* Row 1: Navy Header with Break (Orange) and Lunch (Green) Badges */}
+            <tr className="bg-[#0B192C] text-white font-bold text-xs border-b border-slate-700">
+              <th className="py-3 px-2 border-r border-slate-700 w-[72px] sm:w-[80px] bg-[#0B192C] text-white shrink-0">
+                Timing
+              </th>
+              <th className="py-3 px-1 sm:px-2 border-r border-slate-700">
+                Period 1
+              </th>
+              <th className="py-3 px-1 sm:px-2 border-r border-slate-700">
+                Period 2
+              </th>
+              <th className="py-3 px-1 border-r border-slate-700 bg-[#F97316] text-white font-bold w-[36px] sm:w-[42px] shrink-0 text-[11px]">
+                Break
+              </th>
+              <th className="py-3 px-1 sm:px-2 border-r border-slate-700">
+                Period 3
+              </th>
+              <th className="py-3 px-1 sm:px-2 border-r border-slate-700">
+                Period 4
+              </th>
+              <th className="py-3 px-1 border-r border-slate-700 bg-[#10B981] text-white font-bold w-[36px] sm:w-[42px] shrink-0 text-[11px]">
+                Lunch
+              </th>
+              <th className="py-3 px-1 sm:px-2 border-r border-slate-700">
+                Period 5
+              </th>
+              <th className="py-3 px-1 sm:px-2 border-r border-slate-700">
+                Period 6
+              </th>
+              <th className="py-3 px-1 sm:px-2">Period 7</th>
+            </tr>
+
+            {/* Row 2: Start Time */}
+            <tr className="bg-slate-50/80 dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 text-xs border-b border-slate-200 dark:border-slate-800">
+              <td className="py-2 px-2 font-bold text-[#0B192C] dark:text-white border-r border-slate-200 dark:border-slate-800 text-left pl-3 text-[11px] truncate">
+                Start Time
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                08:45 AM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                09:45 AM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 text-slate-400 font-mono text-[10px]">
+                —
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                10:45 AM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                11:45 AM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 text-slate-400 font-mono text-[10px]">
+                —
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                01:30 PM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                02:30 PM
+              </td>
+              <td className="py-2 px-1 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                03:30 PM
+              </td>
+            </tr>
+
+            {/* Row 3: End Time */}
+            <tr className="bg-slate-50/40 dark:bg-slate-900/30 text-slate-700 dark:text-slate-300 text-xs border-b border-slate-200 dark:border-slate-800">
+              <td className="py-2 px-2 font-bold text-[#0B192C] dark:text-white border-r border-slate-200 dark:border-slate-800 text-left pl-3 text-[11px] truncate">
+                End Time
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                09:45 AM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                10:45 AM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 text-slate-400 font-mono text-[10px]">
+                —
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                11:45 AM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                12:45 PM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 text-slate-400 font-mono text-[10px]">
+                —
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                02:30 PM
+              </td>
+              <td className="py-2 px-1 border-r border-slate-200 dark:border-slate-800 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                03:30 PM
+              </td>
+              <td className="py-2 px-1 font-medium font-mono text-[10px] sm:text-[11px] truncate">
+                04:30 PM
+              </td>
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+            {DAYS.map((dayObj, dayIdx) => (
+              <tr key={dayObj.key}>
+                {/* Day Header */}
+                <td className="py-3 px-2 font-bold text-[#0F172A] dark:text-slate-200 border-r border-slate-200 dark:border-slate-800 text-xs tracking-wider bg-slate-50/50 dark:bg-slate-900/30">
+                  {dayObj.shortName}
+                </td>
+
+                {/* Period 1 */}
+                {renderSlotCell(dayObj.key, 1)}
+
+                {/* Period 2 */}
+                {renderSlotCell(dayObj.key, 2)}
+
+                {/* Short Break Column (spanned vertically for all 6 days on MON row) */}
+                {dayIdx === 0 && (
+                  <td
+                    rowSpan={6}
+                    className="w-[36px] sm:w-[42px] bg-[#FFF7ED] dark:bg-orange-950/20 text-[#C2410C] dark:text-orange-300 font-bold text-center border-r border-slate-200 dark:border-slate-800 select-none py-2 align-middle"
+                  >
+                    <span className="[writing-mode:vertical-lr] tracking-widest font-black text-[10px] sm:text-xs mx-auto block">
+                      SHORT BREAK
+                    </span>
+                  </td>
+                )}
+
+                {/* Period 3 */}
+                {renderSlotCell(dayObj.key, 3)}
+
+                {/* Period 4 */}
+                {renderSlotCell(dayObj.key, 4)}
+
+                {/* Lunch Break Column (spanned vertically for all 6 days on MON row) */}
+                {dayIdx === 0 && (
+                  <td
+                    rowSpan={6}
+                    className="w-[36px] sm:w-[42px] bg-[#ECFDF5] dark:bg-emerald-950/20 text-[#047857] dark:text-emerald-300 font-bold text-center border-r border-slate-200 dark:border-slate-800 select-none py-2 align-middle"
+                  >
+                    <span className="[writing-mode:vertical-lr] tracking-widest font-black text-[10px] sm:text-xs mx-auto block">
+                      LUNCH BREAK
+                    </span>
+                  </td>
+                )}
+
+                {/* Period 5 */}
+                {renderSlotCell(dayObj.key, 5)}
+
+                {/* Period 6 */}
+                {renderSlotCell(dayObj.key, 6)}
+
+                {/* Period 7 */}
+                {renderSlotCell(dayObj.key, 7)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

@@ -43,7 +43,17 @@ import {
   Award,
   ClipboardCheck,
   Lock,
+  Bell,
+  Clock,
+  AlertTriangle,
+  AlertCircle,
+  Calendar,
+  MapPin,
+  CheckCircle2,
+  RotateCw,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/student/examinations")({
@@ -66,6 +76,53 @@ function StudentExaminationsPage() {
   const [examRegStatus, setExamRegStatus] = useState<ExamRegWorkflowStatus>("Locked");
   const [hallTicketStatus, setHallTicketStatus] = useState<HallTicketWorkflowStatus>("Locked");
   const [resultStatus, setResultStatus] = useState<ResultWorkflowStatus>("Not Published");
+
+  // Real-time Database Notifications State
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isLoadingNotifs, setIsLoadingNotifs] = useState(false);
+  const [notifsError, setNotifsError] = useState<string | null>(null);
+
+  const fetchNotifications = async () => {
+    try {
+      setIsLoadingNotifs(true);
+      setNotifsError(null);
+      const res = await api.get("/api/notifications");
+      const list = Array.isArray(res.data) ? res.data : (res.data?.notifications || []);
+      const unread = typeof res.data?.unreadCount === "number" ? res.data.unreadCount : list.filter((n: any) => !n.isRead).length;
+      setNotifications(list);
+      setUnreadCount(unread);
+    } catch (err: any) {
+      setNotifsError("Unable to load notifications.");
+    } finally {
+      setIsLoadingNotifs(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
+
+  const handleMarkAsRead = async (id: string) => {
+    try {
+      await api.put(`/api/notifications/${id}/read`);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
+      );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    } catch {}
+  };
+
+  const handleMarkAllAsRead = async () => {
+    try {
+      await api.put("/api/notifications/read-all");
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+      toast.success("All notifications marked as read.");
+    } catch {
+      toast.error("Failed to mark all as read.");
+    }
+  };
 
   // Dynamic Datasets
   const [profile, setProfile] = useState(MOCK_EXAM_PROFILE);
@@ -250,6 +307,7 @@ function StudentExaminationsPage() {
     { id: "exam-registration", label: "Exam Registration", icon: ClipboardCheck },
     { id: "hall-ticket", label: "Hall Ticket", icon: Ticket },
     { id: "results", label: "Results & Memos", icon: Award },
+    { id: "exam-notifications", label: `Notifications${unreadCount > 0 ? ` (${unreadCount})` : ""}`, icon: Bell },
   ];
 
   // Helper counts
@@ -599,6 +657,171 @@ function StudentExaminationsPage() {
           onApplyRevaluation={() => setRevaluationModalOpen(true)}
           onTogglePublishResults={handleTogglePublishResults}
         />
+      )}
+
+      {activeSubmodule === "exam-notifications" && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-foreground">Examination Notifications & Alerts</h3>
+                {unreadCount > 0 && (
+                  <Badge className="bg-red-500/10 text-red-600 border-red-500/20 text-xs font-semibold">
+                    {unreadCount} Unread
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Real-time official notifications regarding examination timetables, hall tickets, venue allocations, and attendance eligibility.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchNotifications}
+                disabled={isLoadingNotifs}
+                className="text-xs h-8 gap-1.5"
+              >
+                <RotateCw className={`size-3.5 ${isLoadingNotifs ? "animate-spin" : ""}`} /> Refresh
+              </Button>
+              {unreadCount > 0 && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleMarkAllAsRead}
+                  className="text-xs h-8 bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  Mark all read
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+            {isLoadingNotifs && notifications.length === 0 ? (
+              <div className="p-8 text-center text-xs text-muted-foreground animate-pulse">
+                Loading notifications...
+              </div>
+            ) : notifsError ? (
+              <div className="p-8 text-center space-y-3">
+                <p className="text-xs text-muted-foreground">{notifsError}</p>
+                <Button variant="outline" size="sm" onClick={fetchNotifications}>
+                  Retry
+                </Button>
+              </div>
+            ) : notifications.length === 0 ? (
+              <div className="p-12 text-center text-xs text-muted-foreground space-y-2">
+                <Bell className="size-8 text-muted-foreground/30 mx-auto" />
+                <p className="font-semibold text-sm text-foreground">No new notifications.</p>
+                <p>You are all caught up with your examination notices.</p>
+              </div>
+            ) : (
+              notifications.map((n) => {
+                const isShortage = n.type?.includes("SHORTAGE") || n.title?.includes("Attendance");
+                const isResched = n.type?.includes("RESCHED");
+                const isCancel = n.type?.includes("CANCEL");
+                const isHallTicket = n.type?.includes("HALL_TICKET") || n.type?.includes("TICKET");
+                const isVenue = n.type?.includes("VENUE");
+                const isResult = n.type?.includes("RESULTS");
+
+                return (
+                  <div
+                    key={n.id}
+                    className={`p-5 transition-colors flex items-start gap-4 ${
+                      !n.isRead ? "bg-blue-50/40 dark:bg-blue-950/20" : "hover:bg-slate-50/50 dark:hover:bg-slate-800/30"
+                    }`}
+                  >
+                    <div
+                      className={`size-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                        isShortage
+                          ? "bg-amber-500/10 border-amber-500/20 text-amber-600"
+                          : isCancel
+                          ? "bg-rose-500/10 border-rose-500/20 text-rose-600"
+                          : isResched
+                          ? "bg-yellow-500/10 border-yellow-500/20 text-yellow-600"
+                          : isHallTicket
+                          ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-600"
+                          : isVenue
+                          ? "bg-violet-500/10 border-violet-500/20 text-violet-600"
+                          : isResult
+                          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600"
+                          : "bg-blue-500/10 border-blue-500/20 text-blue-600"
+                      }`}
+                    >
+                      {isShortage ? (
+                        <AlertTriangle className="size-5" />
+                      ) : isCancel ? (
+                        <AlertCircle className="size-5" />
+                      ) : isResched ? (
+                        <Calendar className="size-5" />
+                      ) : isHallTicket ? (
+                        <Ticket className="size-5" />
+                      ) : isVenue ? (
+                        <MapPin className="size-5" />
+                      ) : isResult ? (
+                        <Award className="size-5" />
+                      ) : (
+                        <Bell className="size-5" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className={`text-sm font-bold ${!n.isRead ? "text-foreground" : "text-foreground/80"}`}>
+                            {n.title}
+                          </h4>
+                          <Badge variant="outline" className="text-[10px] font-mono uppercase tracking-wider py-0 px-1.5">
+                            {n.type || "EXAM"}
+                          </Badge>
+                          {!n.isRead && (
+                            <span className="size-2 rounded-full bg-blue-600 inline-block shrink-0" title="Unread" />
+                          )}
+                        </div>
+                        <span className="text-[11px] text-muted-foreground flex items-center gap-1 shrink-0">
+                          <Clock className="size-3" />
+                          {new Date(n.createdAt).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {n.message}
+                      </p>
+                      {n.link && (
+                        <div className="pt-1">
+                          <a
+                            href={n.link}
+                            onClick={() => {
+                              if (!n.isRead) handleMarkAsRead(n.id);
+                            }}
+                            className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline inline-flex items-center gap-1"
+                          >
+                            Open linked page →
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                    {!n.isRead && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleMarkAsRead(n.id)}
+                        className="size-8 rounded-lg text-muted-foreground hover:text-blue-600 hover:bg-blue-50 shrink-0"
+                        title="Mark as read"
+                      >
+                        <CheckCircle2 className="size-4" />
+                      </Button>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
       )}
 
       {/* MODALS */}

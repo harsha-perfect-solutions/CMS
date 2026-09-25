@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ExamNotificationsComponent } from "@/modules/examinations/ExamNotificationsComponent";
+import { ExamNotificationManager } from "@/modules/examinations/ExamNotificationManager";
 
 export const Route = createFileRoute("/examinations/notifications")({
   head: () => ({ meta: [{ title: "Exam Notifications — EduSuite Pro" }] }),
@@ -7,5 +7,6 @@ export const Route = createFileRoute("/examinations/notifications")({
 });
 
 export function ExamNotificationsPage() {
-  return <ExamNotificationsComponent />;
+  return <ExamNotificationManager mode="super-admin" />;
 }
+

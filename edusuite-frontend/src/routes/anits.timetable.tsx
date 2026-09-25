@@ -150,12 +150,10 @@ function AnitsTimetablePage() {
           />
           <div className="p-12 text-center bg-card rounded-2xl border border-border/40 space-y-4">
             <BookOpen className="size-12 text-muted-foreground/40 mx-auto" />
-            <h3 className="font-bold text-base text-foreground">No Timetable Assignments Found</h3>
+            <h3 className="font-bold text-base text-foreground">No timetable sessions assigned.</h3>
             <p className="text-xs text-muted-foreground max-w-md mx-auto">
-              No timetable assignments found for{" "}
-              <strong>{facultyData.faculty?.name || "your account"}</strong> in academic year{" "}
-              <strong>{facultyData.academicYear || "the current year"}</strong>.
-              {selectedSemester !== "all" && ` (Filter: Semester ${selectedSemester})`}
+              Your timetable will appear here once teaching sessions are assigned.
+              {selectedSemester !== "all" && ` (Active Filter: Semester ${selectedSemester})`}
             </p>
             {selectedSemester !== "all" && (
               <Button
@@ -172,7 +170,7 @@ function AnitsTimetablePage() {
     }
 
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 w-full max-w-none">
         {/* ── Header: dynamic faculty identity, academic year, semester ── */}
         <TimetableHeader
           faculty={facultyData?.faculty ?? null}
@@ -206,22 +204,24 @@ function AnitsTimetablePage() {
         {/* ── Teaching Load Cards (all values from PostgreSQL) ── */}
         {facultyData?.teachingLoad && <TeachingLoadCards load={facultyData.teachingLoad} />}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            {/* ── Weekly Timetable Grid driven by MasterTimetable records ── */}
-            <WeeklyGrid slots={facultyData?.weeklyGrid || []} />
-          </div>
-          <div className="space-y-6">
-            {/* ── Today's Schedule: IST-based current date ── */}
-            <TodaySchedule schedule={facultyData?.todaySchedule || []} />
-            {/* ── Upcoming Classes: next 5 sessions across days ── */}
-            <UpcomingClasses classes={facultyData?.upcomingClasses || []} />
-            {/* ── Free Periods: slots with no MasterTimetable assignment ── */}
-            <FreePeriodCards freePeriods={facultyData?.freePeriods || []} />
-          </div>
-        </div>
+        {/* ── 1. Weekly Timetable Grid (occupies 100% full content width) ── */}
+        <WeeklyGrid slots={facultyData?.weeklyGrid || []} />
 
+        {/* ── 2. Today's Schedule (Moved below timetable) ── */}
+        <TodaySchedule schedule={facultyData?.todaySchedule || []} />
+
+        {/* ── 3. Upcoming Classes (Moved below today's schedule) ── */}
+        <UpcomingClasses classes={facultyData?.upcomingClasses || []} />
+
+        {/* ── 4. Free Periods & Open Availability ── */}
+        {facultyData?.freePeriods && facultyData.freePeriods.length > 0 && (
+          <FreePeriodCards freePeriods={facultyData.freePeriods} />
+        )}
+
+        {/* ── 5. Assigned Venues & Room Allocations ── */}
         <RoomAllocationTable allocations={facultyData?.roomAllocations || []} />
+
+        {/* ── 6. Timetable Legend ── */}
         <Legend />
       </div>
     );

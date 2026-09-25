@@ -1,14 +1,81 @@
 import { api } from "@/lib/api";
-import type {
-  WeeklySlot,
-  CalendarEvent,
-  UpcomingClassItem,
-  RoomAllocation,
-  SubjectSummaryItem,
-  TeachingLoad,
-  FreePeriod,
-  ConflictItem,
-} from "@/data/faculty-mock-data";
+
+export type WeeklySlotType = "Theory" | "Lab";
+
+export interface WeeklySlot {
+  day: "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday";
+  timeSlot: string;
+  startTime: string;
+  endTime: string;
+  subject: string;
+  code: string;
+  section: string;
+  room: string;
+  building?: string;
+  type: WeeklySlotType;
+  role?: string;
+  isLab: boolean;
+  isCurrentDay?: boolean;
+  isOngoing?: boolean;
+  periodNumber: number;
+  timetableId: string;
+}
+
+export interface TeachingLoad {
+  weeklyClasses: number;
+  theoryHours: number;
+  labHours: number;
+  totalHours: number;
+  totalSubjects: number;
+  totalSections: number;
+}
+
+export interface UpcomingClassItem {
+  subject: string;
+  code: string;
+  time: string;
+  room: string;
+  building: string;
+  section: string;
+  countdown: string;
+}
+
+export interface RoomAllocation {
+  subject: string;
+  code: string;
+  room: string;
+  building: string;
+  type: "Theory" | "Lab";
+  capacity: number;
+  semester: number;
+}
+
+export interface SubjectSummaryItem {
+  name: string;
+  code: string;
+  semester: string;
+  credits: number;
+  weeklyHours: number;
+  sections: string[];
+}
+
+export interface FreePeriod {
+  day: string;
+  timeSlot: string;
+}
+
+export interface ConflictItem {
+  period: number;
+  day: string;
+  reason: string;
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string;
+  type: string;
+}
 
 export interface FacultyProfileHeader {
   id: string;
@@ -40,6 +107,8 @@ export interface TimetableSlotItem {
   isLab: boolean;
   status: "Completed" | "Ongoing" | "Upcoming";
   isOngoing: boolean;
+  attendanceSubmitted?: boolean;
+  attendanceStatus?: "ATTENDANCE_SUBMITTED" | "PENDING";
 }
 
 export interface FacultyTimetableResponse {

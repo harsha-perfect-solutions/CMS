@@ -10,6 +10,13 @@ import {
   Clock,
   Menu,
   ShieldCheck,
+  AlertTriangle,
+  AlertCircle,
+  Calendar,
+  Ticket,
+  Award,
+  MapPin,
+  RotateCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +59,9 @@ export function AnitsHeader({
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isLoadingNotifs, setIsLoadingNotifs] = useState(false);
+  const [notifsError, setNotifsError] = useState<string | null>(null);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [academicYear, setAcademicYear] = useState("2026-27");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<{
@@ -74,16 +84,41 @@ export function AnitsHeader({
       .catch(() => {});
   }, []);
 
-  // 2. Fetch live notifications
+  // 2. Fetch live real-time notifications with focus & periodic polling
+  const fetchNotifications = async (quiet = false) => {
+    try {
+      if (!quiet) setIsLoadingNotifs(true);
+      setNotifsError(null);
+      const res = await api.get("/api/notifications");
+      const list = Array.isArray(res.data) ? res.data : (res.data?.notifications || []);
+      const unread = typeof res.data?.unreadCount === "number" ? res.data.unreadCount : list.filter((n: any) => !n.isRead).length;
+      setNotifications(list);
+      setUnreadCount(unread);
+    } catch (err: any) {
+      console.error("Live notifications fetch error:", err);
+      setNotifsError("Unable to load notifications.");
+    } finally {
+      setIsLoadingNotifs(false);
+    }
+  };
+
   useEffect(() => {
-    api
-      .get("/api/notifications")
-      .then((res) => {
-        const list = Array.isArray(res.data) ? res.data : (res.data?.notifications || []);
-        setNotifications(list);
-        setUnreadCount(list.filter((n: any) => !n.isRead).length);
-      })
-      .catch(() => {});
+    fetchNotifications();
+
+    // Re-fetch on page/window focus and custom refresh events
+    const handleFocus = () => fetchNotifications(true);
+    const handleCustomRefresh = () => fetchNotifications(true);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("exam-notification-refresh", handleCustomRefresh);
+
+    // Periodic refresh every 30 seconds (safe interval without excessive DB hammering)
+    const interval = setInterval(() => fetchNotifications(true), 30000);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("exam-notification-refresh", handleCustomRefresh);
+      clearInterval(interval);
+    };
   }, []);
 
   // 3. Debounced global search for Super Admin & HOD
@@ -130,6 +165,7 @@ export function AnitsHeader({
         prev.map((n) => (n.id === id ? { ...n, isRead: true } : n))
       );
       setUnreadCount((prev) => Math.max(0, prev - 1));
+      window.dispatchEvent(new Event("exam-notification-refresh"));
     } catch {
       // ignore
     }
@@ -140,9 +176,88 @@ export function AnitsHeader({
       await api.put("/api/notifications/read-all");
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
       setUnreadCount(0);
+      window.dispatchEvent(new Event("exam-notification-refresh"));
       toast.success("All notifications marked as read.");
     } catch {
       toast.error("Failed to mark all as read.");
+    }
+  };
+
+  const formatRelativeTime = (dateStr?: string) => {
+    if (!dateStr) return "Recent";
+    const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+    if (diff < 60) return "Just now";
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 172800) return "Yesterday";
+    return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  const getNotificationStyle = (type?: string, title: string = "") => {
+    const t = (type || "").toUpperCase();
+    if (t.includes("SHORTAGE") || t.includes("ALERT") || title.includes("Attendance")) {
+      return {
+        color: "text-amber-600 dark:text-amber-400",
+        bg: "bg-amber-500/10 border-amber-500/20",
+        dot: "bg-amber-500",
+        icon: AlertTriangle,
+      };
+    }
+    if (t.includes("CANCEL")) {
+      return {
+        color: "text-rose-600 dark:text-rose-400",
+        bg: "bg-rose-500/10 border-rose-500/20",
+        dot: "bg-rose-500",
+        icon: AlertCircle,
+      };
+    }
+    if (t.includes("RESCHED")) {
+      return {
+        color: "text-yellow-600 dark:text-yellow-400",
+        bg: "bg-yellow-500/10 border-yellow-500/20",
+        dot: "bg-yellow-500",
+        icon: Calendar,
+      };
+    }
+    if (t.includes("HALL_TICKET") || t.includes("TICKET")) {
+      return {
+        color: "text-indigo-600 dark:text-indigo-400",
+        bg: "bg-indigo-500/10 border-indigo-500/20",
+        dot: "bg-indigo-500",
+        icon: Ticket,
+      };
+    }
+    if (t.includes("RESULTS") || (t.includes("ELIGIB") && !title.includes("Notice"))) {
+      return {
+        color: "text-emerald-600 dark:text-emerald-400",
+        bg: "bg-emerald-500/10 border-emerald-500/20",
+        dot: "bg-emerald-500",
+        icon: Award,
+      };
+    }
+    if (t.includes("VENUE")) {
+      return {
+        color: "text-violet-600 dark:text-violet-400",
+        bg: "bg-violet-500/10 border-violet-500/20",
+        dot: "bg-violet-500",
+        icon: MapPin,
+      };
+    }
+    return {
+      color: "text-blue-600 dark:text-blue-400",
+      bg: "bg-blue-500/10 border-blue-500/20",
+      dot: "bg-blue-600",
+      icon: Bell,
+    };
+  };
+
+  const handleNotificationClick = async (n: any) => {
+    if (!n.isRead) {
+      await handleMarkAsRead(n.id);
+    }
+    setNotifOpen(false);
+    if (n.link) {
+      navigate({ to: n.link as any });
     }
   };
 
@@ -333,7 +448,7 @@ export function AnitsHeader({
         </Badge>
 
         {/* Notifications Popover */}
-        <Popover>
+        <Popover open={notifOpen} onOpenChange={setNotifOpen}>
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
@@ -343,73 +458,130 @@ export function AnitsHeader({
             >
               <Bell className="size-4.5 text-slate-700 dark:text-slate-200" />
               {unreadCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 grid size-4 place-items-center rounded-full bg-red-600 text-[10px] font-bold text-white shadow-xs animate-pulse">
-                  {unreadCount}
+                <span className="absolute -top-0.5 -right-0.5 grid min-w-4 h-4 px-1 place-items-center rounded-full bg-red-600 text-[10px] font-bold text-white shadow-xs animate-pulse">
+                  {unreadCount > 99 ? "99+" : unreadCount}
                 </span>
               )}
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-80 sm:w-96 p-0 rounded-2xl shadow-xl border-border/60">
             <div className="flex items-center justify-between p-4 border-b border-border/40 bg-muted/20">
-              <div>
+              <div className="flex items-center gap-2">
                 <h4 className="font-bold text-sm text-foreground">Notifications</h4>
-                <p className="text-xs text-muted-foreground">
-                  {unreadCount} unread alert{unreadCount !== 1 ? "s" : ""}
-                </p>
+                {unreadCount > 0 && (
+                  <Badge variant="secondary" className="text-[10px] font-bold px-1.5 py-0 h-4 bg-primary/10 text-primary border-primary/20">
+                    {unreadCount} new
+                  </Badge>
+                )}
               </div>
-              {unreadCount > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleMarkAllAsRead}
-                  className="text-xs font-semibold text-primary h-7 px-2"
-                >
-                  Mark all read
-                </Button>
-              )}
+              <div className="flex items-center gap-1">
+                {unreadCount > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleMarkAllAsRead}
+                    className="text-xs font-semibold text-primary hover:text-primary/80 h-7 px-2"
+                  >
+                    Mark all read
+                  </Button>
+                )}
+              </div>
             </div>
 
-            <div className="max-h-80 overflow-y-auto divide-y divide-border/30">
-              {notifications.length === 0 ? (
-                <div className="p-8 text-center text-xs text-muted-foreground">
-                  No notifications found.
-                </div>
-              ) : (
-                notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    className={`p-3.5 text-xs transition-colors hover:bg-muted/30 flex items-start justify-between gap-3 ${
-                      !n.isRead ? "bg-primary/5 font-medium" : "text-muted-foreground"
-                    }`}
-                  >
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-foreground text-xs">{n.title}</span>
-                        {!n.isRead && (
-                          <span className="size-1.5 rounded-full bg-primary inline-block shrink-0" />
-                        )}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">
-                        {n.message}
-                      </p>
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70 pt-0.5">
-                        <Clock className="size-3" />
-                        <span>{new Date(n.createdAt).toLocaleDateString()}</span>
+            <div className="max-h-96 overflow-y-auto divide-y divide-border/30">
+              {isLoadingNotifs && notifications.length === 0 ? (
+                <div className="p-6 space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex gap-3 animate-pulse">
+                      <div className="size-8 rounded-full bg-muted shrink-0" />
+                      <div className="space-y-1.5 flex-1">
+                        <div className="h-3.5 bg-muted rounded w-3/4" />
+                        <div className="h-3 bg-muted rounded w-full" />
+                        <div className="h-2.5 bg-muted rounded w-1/3" />
                       </div>
                     </div>
-                    {!n.isRead && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => handleMarkAsRead(n.id, e)}
-                        className="size-7 rounded-lg text-primary hover:bg-primary/10 shrink-0"
-                        title="Mark as read"
+                  ))}
+                </div>
+              ) : notifsError ? (
+                <div className="p-8 text-center space-y-2">
+                  <AlertCircle className="size-8 text-amber-500 mx-auto" />
+                  <p className="text-xs text-muted-foreground font-medium">{notifsError}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fetchNotifications(false)}
+                    className="h-7 text-xs gap-1.5"
+                  >
+                    <RotateCw className="size-3" /> Retry
+                  </Button>
+                </div>
+              ) : notifications.length === 0 ? (
+                <div className="p-8 text-center text-xs text-muted-foreground">
+                  <Bell className="size-8 text-muted-foreground/30 mx-auto mb-2" />
+                  No new notifications.
+                </div>
+              ) : (
+                notifications.map((n) => {
+                  const style = getNotificationStyle(n.type, n.title);
+                  const IconComp = style.icon;
+                  return (
+                    <div
+                      key={n.id}
+                      onClick={() => handleNotificationClick(n)}
+                      className={`p-3.5 text-xs transition-colors hover:bg-muted/40 flex items-start gap-3 cursor-pointer group ${
+                        !n.isRead ? "bg-primary/[0.04]" : "text-muted-foreground opacity-80 hover:opacity-100"
+                      }`}
+                    >
+                      <div
+                        className={`size-8 rounded-xl flex items-center justify-center shrink-0 border ${style.bg} ${style.color}`}
                       >
-                        <CheckCircle2 className="size-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                ))
+                        <IconComp className="size-4" />
+                      </div>
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 justify-between">
+                          <span className={`font-semibold truncate text-xs ${!n.isRead ? "text-foreground font-bold" : "text-foreground/80"}`}>
+                            {n.title}
+                          </span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {n.priority === "High" && (
+                              <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-rose-500/10 text-rose-600 border border-rose-500/20">
+                                High
+                              </span>
+                            )}
+                            {!n.isRead && (
+                              <span className="size-2 rounded-full bg-blue-600 shrink-0 shadow-xs" title="Unread" />
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2">
+                          {n.message}
+                        </p>
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70 pt-0.5 flex-wrap">
+                          <Clock className="size-3" />
+                          <span>{formatRelativeTime(n.createdAt)}</span>
+                          {n.senderName && <span>&middot; {n.senderName}</span>}
+                          {n.courseCode && <span className="font-semibold text-primary">[{n.courseCode}]</span>}
+                          {n.link && (
+                            <span className="text-primary font-medium group-hover:underline ml-auto">
+                              View details →
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {!n.isRead && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => handleMarkAsRead(n.id, e)}
+                          className="size-7 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Mark as read"
+                        >
+                          <CheckCircle2 className="size-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
           </PopoverContent>

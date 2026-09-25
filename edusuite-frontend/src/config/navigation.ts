@@ -373,6 +373,7 @@ export const SUPER_ADMIN_NAVIGATION: NavSection[] = [
     label: "Super Admin Control Center",
     items: [
       { title: "Super Admin Cockpit", url: "/super-admin/dashboard", icon: ShieldCheck, badge: "Master" },
+      { title: "Exam Notifications", url: "/super-admin/exam-notifications", icon: Bell, badge: "Live" },
       { title: "Acceptance Requests", url: "/super-admin/approval-requests", icon: CheckSquare, badge: "Pending" },
       { title: "Emergency Broadcast", url: "/emergency", icon: Siren, badge: "Instant" },
       { title: "Approval Workflows", url: "/approval-workflows", icon: GitBranch, badge: "Diagram" },
@@ -407,7 +408,7 @@ export const SUPER_ADMIN_NAVIGATION: NavSection[] = [
           { title: "Revaluation", url: "/examinations/revaluation" },
           { title: "Exam Analytics", url: "/examinations/analytics" },
           { title: "Reports", url: "/examinations/reports" },
-          { title: "Notifications", url: "/examinations/notifications" },
+          { title: "Notifications", url: "/super-admin/exam-notifications" },
         ],
       },
       { title: "Results & Grade Cards", url: "/results", icon: Award },

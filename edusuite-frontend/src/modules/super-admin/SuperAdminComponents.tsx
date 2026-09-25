@@ -1,6 +1,7 @@
 import React, { memo } from "react";
 import {
   ShieldCheck,
+  Bell,
   Users,
   UserCog,
   Building2,
@@ -240,6 +241,15 @@ export function SuperAdminModuleView() {
           >
             <Database className={`size-3.5 ${backupLoading ? "animate-spin" : ""}`} />
             {backupLoading ? "Backing up..." : "Trigger Backup"}
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => (window.location.href = "/super-admin/exam-notifications")}
+            className="h-9 gap-2 text-xs font-semibold border-blue-500/40 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10"
+          >
+            <Bell className="size-3.5" /> Exam Notifications
           </Button>
 
           <Button

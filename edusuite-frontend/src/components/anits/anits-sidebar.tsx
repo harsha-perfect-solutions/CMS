@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard,
   Calendar,
   ClipboardCheck,
+  Megaphone,
   Users,
   GraduationCap,
   Layers,
@@ -17,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Logo } from "@/components/brand/logo";
 import { cn } from "@/lib/utils";
+import api from "@/lib/api";
 import type { AnitsUserProfile } from "./anits-header";
 
 export function AnitsSidebar({
@@ -31,7 +33,33 @@ export function AnitsSidebar({
   const fullPath = searchStr ? `${pathname}${searchStr}` : pathname;
 
   const [menuQuery, setMenuQuery] = useState("");
+  const [unreadExamCount, setUnreadExamCount] = useState<number>(0);
   const role = user?.anitsRole || "STUDENT";
+
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      try {
+        const res = await api.get("/api/notifications/badge-count");
+        if (res.data && typeof res.data.count === "number") {
+          setUnreadExamCount(res.data.count);
+        }
+      } catch {
+        // Fallback silently if offline/network error
+      }
+    };
+
+    fetchUnreadCount();
+    const handleRefresh = () => fetchUnreadCount();
+    window.addEventListener("exam-notification-refresh", handleRefresh);
+    window.addEventListener("focus", handleRefresh);
+    const interval = setInterval(fetchUnreadCount, 30000);
+
+    return () => {
+      window.removeEventListener("exam-notification-refresh", handleRefresh);
+      window.removeEventListener("focus", handleRefresh);
+      clearInterval(interval);
+    };
+  }, []);
 
   const getPortalTitle = () => {
     switch (role) {
@@ -54,6 +82,12 @@ export function AnitsSidebar({
           { label: "Dashboard", href: "/anits/dashboard", icon: LayoutDashboard },
           { label: "Master Timetable", href: "/anits/timetable", icon: Calendar },
           { label: "Attendance", href: "/anits/attendance", icon: ClipboardCheck },
+          {
+            label: "Exam Notifications",
+            href: "/anits/exam-notifications",
+            icon: Megaphone,
+            badge: unreadExamCount > 0 ? unreadExamCount : undefined,
+          },
           { label: "Classes & Cohorts", href: "/anits/my-classes", icon: BookOpen },
           { label: "Faculty", href: "/anits/faculty", icon: Users },
           { label: "Students", href: "/anits/students", icon: GraduationCap },
@@ -66,6 +100,12 @@ export function AnitsSidebar({
           { label: "Dashboard", href: "/anits/dashboard", icon: LayoutDashboard },
           { label: "Department Timetable", href: "/anits/timetable", icon: Calendar },
           { label: "Attendance", href: "/anits/attendance", icon: ClipboardCheck },
+          {
+            label: "Exam Notifications",
+            href: "/anits/exam-notifications",
+            icon: Megaphone,
+            badge: unreadExamCount > 0 ? unreadExamCount : undefined,
+          },
           { label: "Reports", href: "/anits/reports", icon: FileBarChart },
           { label: "Profile", href: "/anits/profile", icon: User },
         ];
@@ -185,7 +225,12 @@ export function AnitsSidebar({
                 )}
               >
                 <Icon className={cn("size-4 shrink-0", isActive ? "text-white" : "text-[#94A3B8]")} />
-                <span className="truncate">{item.label}</span>
+                <span className="truncate flex-1">{item.label}</span>
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span className="ml-auto inline-flex items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-xs">
+                    {item.badge > 99 ? "99+" : item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}

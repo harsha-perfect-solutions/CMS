@@ -2,7 +2,8 @@ export type ExamSubmodule =
   | "course-registration"
   | "exam-registration"
   | "hall-ticket"
-  | "results";
+  | "results"
+  | "exam-notifications";
 
 export type CourseRegWorkflowStatus =
   | "Not Started"

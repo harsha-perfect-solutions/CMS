@@ -1,144 +1,181 @@
-import { Clock, MapPin, Layers, BookOpen, FlaskConical, CheckCircle2, Radio, PlayCircle } from "lucide-react";
+import { Clock, MapPin, Layers, BookOpen, FlaskConical, CheckCircle2, Radio, Calendar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link } from "@tanstack/react-router";
 import type { TimetableSlotItem } from "@/services/FacultyTimetableService";
 
 interface TodayScheduleProps {
   schedule: TimetableSlotItem[];
-  onMarkAttendance?: (slot: TimetableSlotItem) => void;
 }
 
-export function TodaySchedule({ schedule, onMarkAttendance }: TodayScheduleProps) {
+export function TodaySchedule({ schedule }: TodayScheduleProps) {
   const getBadgeStyle = (status: string) => {
     switch (status) {
       case "Completed":
-        return "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
+        return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
       case "Ongoing":
-        return "bg-amber-500/15 text-amber-600 border-amber-500/30 animate-pulse font-extrabold";
+        return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 font-extrabold";
       default:
-        return "bg-blue-500/10 text-blue-600 border-blue-500/20";
+        return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
     }
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Today's Schedule Cards
-        </h3>
-        <span className="text-[0.7rem] text-muted-foreground font-mono">
-          {schedule.length} {schedule.length === 1 ? "Class" : "Classes"} Scheduled
-        </span>
+    <div className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4 md:p-6 space-y-4 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="font-display font-bold text-base text-foreground flex items-center gap-2">
+              <Calendar className="size-4 text-primary" />
+              Today's Schedule
+            </h3>
+            <Badge
+              variant="outline"
+              className="text-[10px] font-bold py-0.5 px-2 bg-primary/10 text-primary border-primary/20"
+            >
+              {schedule.length} {schedule.length === 1 ? "Class Scheduled" : "Classes Scheduled"}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Personal teaching commitments and live attendance actions for today
+          </p>
+        </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="divide-y divide-border/60 rounded-xl border border-border/70 overflow-hidden bg-card">
         {schedule.map((slot, idx) => {
           const isOngoing = slot.status === "Ongoing";
+          const isSubmitted = Boolean(
+            slot.attendanceSubmitted || slot.attendanceStatus === "ATTENDANCE_SUBMITTED"
+          );
 
           return (
-            <Card
+            <div
               key={slot.id || idx}
-              className={`border transition-all duration-300 relative overflow-hidden text-xs py-0 ${
+              className={`p-4 transition-all duration-200 flex flex-col md:flex-row md:items-center justify-between gap-4 ${
                 isOngoing
-                  ? "border-amber-500/60 bg-amber-500/5 shadow-elevated ring-1 ring-amber-500/30"
-                  : "border-border/70 shadow-card hover:shadow-elevated bg-card"
+                  ? "bg-amber-500/5 border-l-4 border-l-amber-500"
+                  : "hover:bg-muted/30"
               }`}
             >
-              {isOngoing && (
-                <div className="absolute top-0 right-0 h-1.5 w-full bg-gradient-to-r from-amber-400 to-amber-600" />
-              )}
-              <CardContent className="p-4 space-y-3">
-                <div className="flex justify-between items-start">
-                  <span className="font-mono text-muted-foreground text-[0.68rem] font-bold flex items-center gap-1.5">
-                    <Clock className="size-3.5 text-primary/70" /> {slot.time}
-                  </span>
-                  <Badge
-                    variant="outline"
-                    className={`py-0.5 px-2 rounded-xl text-[0.62rem] font-bold border flex items-center gap-1 ${getBadgeStyle(
-                      slot.status
-                    )}`}
-                  >
-                    {isOngoing && <Radio className="size-2.5 animate-ping text-amber-600" />}
-                    {slot.status === "Completed" && <CheckCircle2 className="size-2.5 text-emerald-600" />}
-                    {slot.status.toUpperCase()}
-                  </Badge>
-                </div>
-
-                <div>
-                  <div className="flex items-center gap-1.5 mb-1">
-                    {slot.isLab ? (
-                      <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 font-bold">
-                        <FlaskConical className="size-3" /> LAB
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[0.6rem] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 border border-blue-500/20 font-bold">
-                        <BookOpen className="size-3" /> THEORY
-                      </span>
-                    )}
-                    {slot.subjectCode && (
-                      <span className="text-[0.65rem] font-mono text-muted-foreground font-semibold">
-                        {slot.subjectCode}
-                      </span>
-                    )}
+              {/* Left Column: Timing & Status */}
+              <div className="flex items-center gap-3 sm:gap-4 shrink-0 min-w-[200px]">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs sm:text-sm font-bold text-foreground flex items-center gap-1.5">
+                      <Clock className="size-3.5 text-primary" /> {slot.time}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] font-bold py-0.5 px-2 rounded-lg border flex items-center gap-1 ${getBadgeStyle(
+                        slot.status
+                      )}`}
+                    >
+                      {isOngoing && <Radio className="size-2.5 animate-ping text-amber-600" />}
+                      {slot.status === "Completed" && <CheckCircle2 className="size-2.5 text-emerald-600" />}
+                      {slot.status.toUpperCase()}
+                    </Badge>
                   </div>
-                  <h4 className="font-bold text-sm leading-snug truncate" title={slot.subject}>
+                  <span className="text-[11px] font-mono text-muted-foreground block">
+                    Period {slot.periodNumber}
+                  </span>
+                </div>
+              </div>
+
+              {/* Middle Column: Course, Section, Room */}
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">
+                    {slot.subjectCode || "COURSE"}
+                  </span>
+                  {slot.isLab ? (
+                    <Badge
+                      variant="outline"
+                      className="text-[9px] font-bold py-0 px-1.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20"
+                    >
+                      <FlaskConical className="size-2.5 mr-1" /> LAB
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="text-[9px] font-bold py-0 px-1.5 bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20"
+                    >
+                      <BookOpen className="size-2.5 mr-1" /> THEORY
+                    </Badge>
+                  )}
+                  <h4 className="font-bold text-sm text-foreground truncate" title={slot.subject}>
                     {slot.subject}
                   </h4>
-                  <p className="text-[0.68rem] text-muted-foreground mt-1 font-medium flex items-center gap-1">
-                    <Layers className="size-3 text-primary/60" /> Section:{" "}
-                    <span className="font-semibold text-foreground">{slot.section}</span>
-                  </p>
                 </div>
 
-                <div className="pt-2.5 border-t border-border/50 flex justify-between items-center text-[0.68rem] text-muted-foreground font-medium">
+                <div className="flex items-center gap-4 text-xs text-muted-foreground font-medium">
                   <span className="flex items-center gap-1">
-                    <MapPin className="size-3 text-primary/70" /> Room {slot.room}
+                    <Layers className="size-3.5 text-primary/70" />
+                    <span>Section {slot.section}</span>
                   </span>
-                  <span className="font-mono text-[0.65rem]">Period {slot.periodNumber}</span>
+                  <span>&middot;</span>
+                  <span className="flex items-center gap-1">
+                    <MapPin className="size-3.5 text-primary/70" />
+                    <span>{slot.room || "Room not assigned"}</span>
+                  </span>
                 </div>
+              </div>
 
-                {/* Real interactive module actions */}
-                <div className="pt-2 border-t border-border/40 flex items-center gap-2">
+              {/* Right Column: Attendance Action */}
+              <div className="shrink-0 flex items-center justify-start md:justify-end">
+                {isSubmitted ? (
+                  <div className="flex items-center gap-2.5">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20">
+                      <CheckCircle2 className="size-4" /> Attendance Submitted
+                    </span>
+                    <Button
+                      asChild
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3 text-xs rounded-xl border-border/70 text-muted-foreground hover:text-foreground"
+                    >
+                      <Link
+                        to="/anits/attendance"
+                        search={{
+                          timetableId: slot.timetableId || slot.id,
+                          tab: "mark",
+                        }}
+                      >
+                        View Register
+                      </Link>
+                    </Button>
+                  </div>
+                ) : (
                   <Button
                     asChild
                     variant={isOngoing ? "default" : "outline"}
                     size="sm"
-                    className={`h-7 px-2.5 rounded-lg text-[0.65rem] font-bold cursor-pointer flex-1 ${
-                      isOngoing ? "bg-amber-600 hover:bg-amber-700 text-white shadow-sm" : ""
+                    className={`h-9 px-4 rounded-xl text-xs font-bold cursor-pointer shadow-xs ${
+                      isOngoing
+                        ? "bg-amber-600 hover:bg-amber-700 text-white"
+                        : "border-primary/40 text-primary hover:bg-primary/10"
                     }`}
                   >
                     <Link
-                      to="/faculty/attendance"
+                      to="/anits/attendance"
                       search={{
                         timetableId: slot.timetableId || slot.id,
-                        semester: slot.semester,
-                        section: slot.rawSection,
-                        period: slot.periodNumber,
+                        tab: "mark",
                       }}
                     >
-                      {isOngoing ? "Take Attendance" : "Mark Attendance"}
+                      Take Attendance
                     </Link>
                   </Button>
-                  <Button
-                    asChild
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 rounded-lg text-[0.65rem] font-bold cursor-pointer text-muted-foreground hover:text-foreground"
-                  >
-                    <Link to="/faculty/students">Open Class</Link>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+                )}
+              </div>
+            </div>
           );
         })}
 
         {schedule.length === 0 && (
-          <div className="col-span-full border border-dashed rounded-2xl bg-card p-8 text-center text-muted-foreground space-y-1.5">
-            <p className="font-semibold text-sm text-foreground">No classes scheduled for today.</p>
-            <p className="text-xs">Your personal academic timetable has no assigned lecture or lab sessions today.</p>
+          <div className="p-8 text-center text-muted-foreground space-y-1">
+            <p className="font-semibold text-xs text-foreground">No classes scheduled for today.</p>
+            <p className="text-[11px]">Your personal timetable has no teaching sessions scheduled today.</p>
           </div>
         )}
       </div>

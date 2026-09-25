@@ -10,10 +10,15 @@ class ApiClient {
   private baseURL: string;
 
   constructor() {
-    this.baseURL =
-      typeof window !== "undefined" && window.location.hostname === "localhost"
-        ? "http://localhost:5000/"
-        : "/";
+    const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+    const isLocalNetwork =
+      typeof window !== "undefined" &&
+      (host === "localhost" ||
+        host === "127.0.0.1" ||
+        host.startsWith("192.168.") ||
+        host.startsWith("10.") ||
+        host.startsWith("172."));
+    this.baseURL = isLocalNetwork ? `http://${host}:5000/` : "/";
   }
 
   public getBaseURL(): string {
